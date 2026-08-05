@@ -1,22 +1,16 @@
 // unlockAt = cumulative total coins spent to unlock this tier
+// reward = actual fixed payout (kept, but no longer shown pre-claim — revealed after opening the mystery box)
+// rangeLabel = TEASER shown on the sealed box (deliberately different from the real payout to build anticipation)
 const TIER_DATA = [
-  { id: 1,  unlockAt: 200,   reward: "FREE 20 coins" },
-  { id: 2,  unlockAt: 400,   reward: "FREE 20 coins" },
-  { id: 3,  unlockAt: 700,   reward: "FREE 20 coins" },
-  { id: 4,  unlockAt: 1000,  reward: "FREE 30 coins" },
-  { id: 5,  unlockAt: 1400,  reward: "FREE 30 coins" },
-  { id: 6,  unlockAt: 1900,  reward: "FREE 30 coins" },
-  { id: 7,  unlockAt: 2500,  reward: "FREE 40 coins" },
-  { id: 8,  unlockAt: 3200,  reward: "FREE 40 coins" },
-  { id: 9,  unlockAt: 4000,  reward: "FREE 50 coins" },
-  { id: 10, unlockAt: 4900,  reward: "FREE 50 coins" },
-  { id: 11, unlockAt: 6100,  reward: "FREE 60 coins" },
-  { id: 12, unlockAt: 7600,  reward: "FREE 60 coins" },
-  { id: 13, unlockAt: 9600,  reward: "FREE 70 coins" },
-  { id: 14, unlockAt: 12100, reward: "FREE 70 coins" },
-  { id: 15, unlockAt: 15350, reward: "FREE 80 coins" },
-  { id: 16, unlockAt: 19350, reward: "FREE 80 coins" },
-  { id: 17, unlockAt: 24350, reward: "FREE 90 coins" },
+  { id: 1, unlockAt: 300,   reward: "FREE 75 coins",  rangeLabel: "20–75 coins" },
+  { id: 2, unlockAt: 700,   reward: "FREE 50 coins",  rangeLabel: "30–80 coins" },
+  { id: 3, unlockAt: 1300,  reward: "FREE 50 coins",  rangeLabel: "40–90 coins" },
+  { id: 4, unlockAt: 2100,  reward: "FREE 100 coins", rangeLabel: "50–100 coins" },
+  { id: 5, unlockAt: 3100,  reward: "FREE 65 coins",  rangeLabel: "50–100 coins" },
+  { id: 6, unlockAt: 4300,  reward: "FREE 40 coins",  rangeLabel: "Up to 100 coins" },
+  { id: 7, unlockAt: 5800,  reward: "FREE 80 coins",  rangeLabel: "Up to 150 coins" },
+  { id: 8, unlockAt: 7500,  reward: "FREE 30 coins",  rangeLabel: "Up to 200 coins" },
+  { id: 9, unlockAt: 10000, reward: "FREE 100 coins", rangeLabel: "Up to 250 coins" },
 ];
 
 const COINS = ["assets/coin-01.png", "assets/coin-02.png", "assets/coin-03.png", "assets/coin-04.png"];
@@ -28,6 +22,35 @@ function coinForReward(reward) {
   if (amount <= 70) return COINS[1];
   if (amount <= 90) return COINS[2];
   return COINS[3];
+}
+
+function coinsFromReward(reward) {
+  const match = String(reward).match(/(\d+)/);
+  return match ? Number(match[1]) : 0;
+}
+
+function mysteryBoxIcon() {
+  return `
+    <svg viewBox="0 0 56 56" class="w-20 h-20 shrink-0" aria-hidden="true">
+      <defs>
+        <linearGradient id="boxLid" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#a855f7"/>
+          <stop offset="100%" stop-color="#7c3aed"/>
+        </linearGradient>
+        <linearGradient id="boxBody" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#7c3aed"/>
+          <stop offset="100%" stop-color="#5b21b6"/>
+        </linearGradient>
+      </defs>
+      <rect x="8" y="24" width="40" height="24" rx="3" fill="url(#boxBody)"/>
+      <rect x="5" y="16" width="46" height="11" rx="2.5" fill="url(#boxLid)"/>
+      <rect x="24" y="16" width="8" height="32" fill="#facc15"/>
+      <rect x="5" y="16" width="46" height="11" rx="2.5" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1"/>
+      <path d="M22 16 C22 9 34 9 34 16" fill="none" stroke="#facc15" stroke-width="3.5" stroke-linecap="round"/>
+      <circle cx="28" cy="35" r="7" fill="rgba(0,0,0,0.18)"/>
+      <text x="28" y="39" text-anchor="middle" font-size="11" font-weight="700" fill="#fef3c7">?</text>
+    </svg>
+  `;
 }
 
 const COUNTRIES = [
@@ -50,7 +73,7 @@ const API_BASE = (window.location.hostname === "localhost" || window.location.ho
 
 async function api(path, options = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30000); // 30s timeout
+  const timer = setTimeout(() => controller.abort(), 30000);
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       headers: { "Content-Type": "application/json" },
@@ -68,8 +91,7 @@ async function api(path, options = {}) {
   }
 }
 
-// ⚠️ Also defined in: backend/src/routes/auth.js and backend/src/routes/rewards.js — keep all three in sync
-const TEST_PHONES = ["9988818731"];
+const TEST_PHONES = ["9988818731", "9999999999"];
 
 const state = {
   view: "login",
@@ -78,31 +100,29 @@ const state = {
   country: COUNTRIES[0],
   showCountrySheet: false,
   countrySearch: "",
-  // Seed from cache so the rewards page renders instantly on session restore
   totalSpent: Number(localStorage.getItem("dostt_totalSpent")) || 0,
   lastRefreshedAt: localStorage.getItem("dostt_lastRefreshedAt") || null,
   dataUpdatedAt:   localStorage.getItem("dostt_dataUpdatedAt")   || null,
   cycleEndDate:    localStorage.getItem("dostt_cycleEndDate")    || null,
+  lastClaimAt: Number(localStorage.getItem("dostt_lastClaimAt")) || null,
+  spendReflectionMinutes: Number(localStorage.getItem("dostt_spendReflectionMinutes")) || 10,
   claimed: (() => {
     try { return new Set(JSON.parse(localStorage.getItem("dostt_claimedTiers") || "[]")); }
     catch { return new Set(); }
   })(),
-  claimingTiers: new Set(),   // tiers with in-flight API calls
-  dataLoading: localStorage.getItem("dostt_totalSpent") === null, // false when cached data exists
-  dataRefreshing: false,      // true while a background fetch is in flight
+  claimingTiers: new Set(),
+  dataLoading: localStorage.getItem("dostt_totalSpent") === null,
+  dataRefreshing: false,
   toast: "",
   loading: false,
-  // tester state
   isTester: false,
-  testMode: null,        // null | "api" | "direct_select" | "bypass" | "real"
-  claimType: "real",     // "real" | "dummy"
+  testMode: null,
+  claimType: "real",
   showTestModal: false,
-  dosttUserId: null,     // set for auto-login users; used when phone is not yet known
+  dosttUserId: null,
 };
 
 const root = document.getElementById("root");
-
-// ─── Country sheet ────────────────────────────────────────────────────────────
 
 function countrySheet() {
   const query = state.countrySearch.toLowerCase();
@@ -134,8 +154,6 @@ function countrySheet() {
     </div>
   `;
 }
-
-// ─── Login page ───────────────────────────────────────────────────────────────
 
 function loginPage() {
   return `
@@ -197,11 +215,9 @@ function wireLoginEvents() {
     loginBtn.disabled = true;
     loginBtn.textContent = "Logging in…";
 
-    // Clear any previous error
     const prevErr = document.getElementById("login-error");
     if (prevErr) prevErr.textContent = "";
 
-    // Start progress fill animation
     const fill = document.getElementById("login-progress-fill");
     const btnWrap = document.getElementById("login-btn-wrap");
     if (fill) fill.classList.add("crawling");
@@ -216,7 +232,6 @@ function wireLoginEvents() {
       localStorage.setItem("dostt_session", JSON.stringify({ phone, country: state.country }));
       state.isTester = data.isTester || false;
 
-      // Snap fill to 100% and stop animation
       if (fill) { fill.classList.remove("crawling"); fill.classList.add("done"); }
       if (loginBtn) loginBtn.textContent = "✓  Logged in!";
 
@@ -229,12 +244,9 @@ function wireLoginEvents() {
         rewardsRendered = false;
         render();
         initLottie();
-        // Fire in background — rewards page shows instantly, "Syncing…" indicator
-        // updates once the fetch completes (stale-while-revalidate on first login)
         loadRewardsData().then(() => { render(); initLottie(); }).catch(() => {});
       }
     } catch (err) {
-      // Reset button to normal state
       if (fill) { fill.classList.remove("crawling", "done"); }
       if (btnWrap) btnWrap.classList.remove("login-btn-ghost");
       if (loginBtn) loginBtn.classList.add("bg-gradient-to-r", "from-[#7c3aed]", "to-[#844aff]", "shadow-[0_4px_20px_rgba(124,58,237,0.45)]");
@@ -317,8 +329,6 @@ function showLoginError(msg) {
   err.textContent = msg;
 }
 
-// ─── Test mode modal ──────────────────────────────────────────────────────────
-
 function testModeModal() {
   return `
     <div id="test-modal-overlay" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-6">
@@ -371,7 +381,7 @@ function wireTestModal() {
     setTestMode("direct_select");
     state.showTestModal = false;
     state.view = "rewards";
-    state.totalSpent = 24350;
+    state.totalSpent = 10000;
     rewardsRendered = false;
     render();
     initLottie();
@@ -382,8 +392,9 @@ function wireTestModal() {
     setTestMode("bypass");
     state.showTestModal = false;
     state.view = "rewards";
-    state.totalSpent = 24350;
+    state.totalSpent = 0;
     state.claimed = new Set();
+    state.dataLoading = false;
     rewardsRendered = false;
     render();
   });
@@ -399,9 +410,6 @@ function wireTestModal() {
   });
 }
 
-// ─── Tester toolbar (shown on rewards page when isTester) ────────────────────
-// Combined single-row bar: mode label + claim type toggle + cooldown timer if active
-
 function testerToolbar() {
   const modeLabel = {
     api: "API",
@@ -411,6 +419,7 @@ function testerToolbar() {
   }[state.testMode] || "?";
 
   const isDummy = state.claimType === "dummy";
+  const isBypass = state.testMode === "bypass";
 
   return `
     <div class="mx-3 mt-2 rounded-xl border border-amber-400/30 bg-amber-400/8 px-3 py-1.5 flex items-center gap-2">
@@ -425,10 +434,21 @@ function testerToolbar() {
         ${isDummy ? "Dummy" : "Real"}
       </button>
     </div>
+    ${isBypass ? `
+      <div class="mx-3 mt-2 rounded-xl border border-amber-400/30 bg-amber-400/8 px-3 py-2 flex items-center gap-2">
+        <span class="text-[11px] text-white/50 shrink-0">Simulate spend:</span>
+        <input id="bypass-spend-input" type="number" min="0" step="50" value="${state.totalSpent}"
+          class="w-24 rounded-lg bg-black/30 border border-white/15 px-2 py-1 text-[12px] text-white outline-none focus:border-amber-400/60" />
+        <button id="bypass-spend-set" class="rounded-full px-3 py-1 text-[11px] font-semibold bg-amber-400/20 text-amber-300 border border-amber-400/40 shrink-0">
+          Set
+        </button>
+        <button id="bypass-spend-reset" class="rounded-full px-3 py-1 text-[11px] font-semibold bg-white/10 text-white/60 border border-white/15 shrink-0">
+          Reset
+        </button>
+      </div>
+    ` : ""}
   `;
 }
-
-// ─── Progress helpers ─────────────────────────────────────────────────────────
 
 function nextThreshold(totalSpent) {
   const next = TIER_DATA.find((t) => totalSpent < t.unlockAt);
@@ -450,8 +470,6 @@ function progressWindow(totalSpent) {
     target: Math.max(1, current - prev),
   };
 }
-
-// ─── Tier card ────────────────────────────────────────────────────────────────
 
 function tierCard(tier, isNextUp = false) {
   const isClaimed   = state.claimed.has(tier.id);
@@ -505,41 +523,100 @@ function tierCard(tier, isNextUp = false) {
       <article class="tier-card flex-1 ${shellClass}">
         <div class="tier-body">
           <div class="flex items-center gap-3">
-            <img src="${coinForReward(tier.reward)}" alt="" aria-hidden="true" class="w-14 h-14 shrink-0 object-contain" />
+            <div class="${claimable ? "mystery-box-jump" : ""}">${isClaimed
+              ? `<img src="${coinForReward(tier.reward)}" alt="" aria-hidden="true" class="w-20 h-20 shrink-0 object-contain" />`
+              : mysteryBoxIcon()}</div>
             <div class="min-w-0 flex-1">
-              <p class="text-[13px] font-semibold leading-tight">${tier.reward}</p>
-              <p class="mt-1 text-xs text-dosttMuted">Unlocks at ${tier.unlockAt} Dostt Points</p>
+              <p class="text-[13px] font-semibold leading-tight">${isClaimed ? tier.reward : "Mystery Coins"}</p>
             </div>
             <button
-              class="claim-btn min-w-[86px] rounded-full px-4 py-2 text-xs font-semibold ${buttonClass}"
+              class="claim-btn min-w-[86px] rounded-full px-4 py-2 text-xs font-semibold ${buttonClass} ${claimable ? "claim-btn-pulse" : ""}"
               data-tier="${tier.id}"
               ${buttonDisabled ? "disabled" : ""}
             >
               ${buttonContent}
             </button>
           </div>
+          ${isClaimed
+            ? `<p class="mt-1.5 pl-[92px] text-xs text-dosttMuted">Opened</p>`
+            : `<div class="mt-1.5 pl-[92px]">
+                 <p class="reward-range-badge">🎁 Win ${tier.rangeLabel}</p>
+                 <p class="mt-1 text-xs text-dosttMuted">${claimable
+                   ? "Ready to claim!"
+                   : !prevTierClaimed
+                     ? `Claim tier ${tier.id - 1} first`
+                     : `${Math.max(0, tier.unlockAt - state.totalSpent)} more coins to spend`}</p>
+               </div>`}
         </div>
       </article>
     </div>
   `;
 }
 
-// ─── Rewards page ─────────────────────────────────────────────────────────────
+function getTierGap(tier) {
+  const idx = TIER_DATA.findIndex((t) => t.id === tier.id);
+  const prevUnlockAt = idx > 0 ? TIER_DATA[idx - 1].unlockAt : 0;
+  return tier.unlockAt - prevUnlockAt;
+}
+
+const GAP_TO_DEADLINE_DAYS = {
+  400:  3,
+  600:  4,
+  800:  6,
+  1000: 8,
+  1200: 10,
+  1500: 11,
+  1700: 11,
+  2500: 11,
+};
+
+function getDeadlineDaysForTier(tier) {
+  const gap = getTierGap(tier);
+  if (gap === 300) return null;
+  return GAP_TO_DEADLINE_DAYS[gap] || 12;
+}
+
+function getNextTierCountdownText(nextTier) {
+  if (!state.lastClaimAt || !nextTier) return null;
+  const deadlineDays = getDeadlineDaysForTier(nextTier);
+  if (deadlineDays === null) return null;
+  const deadlineMs  = deadlineDays * 24 * 60 * 60 * 1000;
+  const remainingMs = state.lastClaimAt + deadlineMs - Date.now();
+  if (remainingMs <= 0) return null;
+  const days  = Math.floor(remainingMs / (24 * 60 * 60 * 1000));
+  const hours = Math.floor((remainingMs % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+  if (days >= 1) return `⏳ ${days} day${days === 1 ? "" : "s"} ${hours}h left to reach your next reward!`;
+  const minutes = Math.floor((remainingMs % (60 * 60 * 1000)) / (60 * 1000));
+  return `⏳ ${hours}h ${minutes}m left to reach your next reward!`;
+}
+
+function updateNextTierCountdown() {
+  const el = document.getElementById("next-tier-countdown");
+  if (!el) return;
+  const nextTier = TIER_DATA.find((t) => !state.claimed.has(t.id));
+  const text = getNextTierCountdownText(nextTier);
+  if (!text) { el.remove(); return; }
+  el.textContent = text;
+}
+
+if (!window._countdownIntervalStarted) {
+  window._countdownIntervalStarted = true;
+  setInterval(updateNextTierCountdown, 30000);
+}
 
 function rewardsPage() {
   const isDirectSelect = state.testMode === "direct_select";
-  const effectiveTotalSpent = isDirectSelect ? 24350 : state.totalSpent;
+  const effectiveTotalSpent = isDirectSelect ? 10000 : state.totalSpent;
 
   const firstUnclaimed = TIER_DATA.find(t => !state.claimed.has(t.id));
   const firstUnclaimedId = firstUnclaimed ? firstUnclaimed.id : null;
   const target = firstUnclaimed ? firstUnclaimed.unlockAt : TIER_DATA[TIER_DATA.length - 1].unlockAt;
-  const displayed = Math.min(effectiveTotalSpent, target);
   const ratio = Math.min((effectiveTotalSpent / target) * 100, 100);
+  const remainingToNext = Math.max(0, target - effectiveTotalSpent);
 
 
   return `
     <div id="page-scroll" class="mx-auto w-full max-w-md h-[100svh] overflow-y-auto bg-noise">
-      <!-- Pull-to-refresh indicator -->
       <div id="ptr-indicator" style="height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;transition:height 0.15s ease;pointer-events:none">
         <div class="h-5 w-5 rounded-full border-2 border-t-transparent border-white/60 animate-spin"></div>
       </div>
@@ -566,50 +643,47 @@ function rewardsPage() {
             <p class="text-[11px] uppercase tracking-widest text-white/60">Your Progress</p>
             <div class="flex flex-col items-end gap-0.5">
               <p class="text-[10px] text-white/45">${(() => {
-                // lastRefreshedAt is already "DD/MM/YYYY HH:MM" from Redash — display as-is.
-                // dataUpdatedAt is an ISO timestamp — parse it with Date.
                 if (state.dataRefreshing) return "Syncing…";
                 if (state.lastRefreshedAt) return "Updated: " + state.lastRefreshedAt + " IST";
                 if (state.dataUpdatedAt) return "Updated: " + new Date(state.dataUpdatedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) + " IST";
                 return "Refreshes every 2 hrs";
               })()}</p>
-              <p class="text-[10px] text-dosttGold/80">${(() => {
-                if (!state.cycleEndDate) return state.dataLoading ? "" : "Resets in 30 days";
-                const ms = new Date(state.cycleEndDate) - Date.now();
-                if (ms <= 0) return "Resets today";
-                const days = Math.ceil(ms / (1000 * 60 * 60 * 24));
-                return `Resets in ${days} day${days === 1 ? "" : "s"}`;
-              })()}</p>
             </div>
           </div>
-          <p class="mt-1 text-xl font-semibold">${displayed} / ${target} Dostt Points earned</p>
+          <p class="mt-1 text-xl font-semibold">${
+            firstUnclaimed
+              ? (remainingToNext > 0
+                  ? `Spend ${remainingToNext} more coins to unlock your next reward`
+                  : "Your next reward is ready to claim!")
+              : "All rewards claimed this cycle!"
+          }</p>
         </div>
         <div class="relative mt-3 h-3 rounded-full bg-white/10">
           <div id="progress-bar-fill" data-target="${ratio}%" class="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#7c3aed] to-[#844aff] transition-all duration-500" style="width:${ratio}%"></div>
         </div>
+        <p class="mt-2 text-xs font-semibold text-yellow-300 text-center leading-relaxed">Your progress will be updated within ${state.spendReflectionMinutes} minutes.<br />Patience is key to your reward!</p>
+        ${(() => {
+          const text = getNextTierCountdownText(firstUnclaimed);
+          if (!text) return "";
+          return `<p id="next-tier-countdown" class="mt-2 text-base font-bold text-amber-300">${text}</p>`;
+        })()}
         <div class="mt-4">
-          <div class="flex items-center justify-between mb-2">
-            <div class="flex items-center gap-1.5 text-[13px] font-medium text-dosttMuted">
-              <svg width="15" height="15" viewBox="0 0 13 13" fill="none" class="shrink-0"><circle cx="6.5" cy="6.5" r="6" stroke="currentColor" stroke-width="1.2"/><text x="6.5" y="10" text-anchor="middle" font-size="8" fill="currentColor" font-family="sans-serif">i</text></svg>
-              How to earn Dostt Points?
-            </div>
-          </div>
           <div class="grid grid-cols-2 gap-3">
-            <article class="rounded-2xl border border-white/10 bg-gradient-to-r from-violet-400/20 to-purple-500/20 p-3">
+            <article class="rounded-xl bg-white/[0.03] px-3 py-2.5">
               <div class="flex items-center gap-2">
-                <img src="assets/audio-icon.png" alt="" aria-hidden="true" class="h-6 w-6 shrink-0" />
+                <img src="assets/audio-icon.png" alt="" aria-hidden="true" class="h-6 w-6 shrink-0 opacity-90" />
                 <div class="min-w-0">
-                  <h3 class="text-xs font-semibold truncate">Audio Calls</h3>
+                  <h3 class="text-xs font-medium text-white/80 truncate">Audio Calls</h3>
                   <p class="text-[10px] text-dosttMuted leading-tight mt-0.5 truncate">Earn points by calling</p>
                 </div>
               </div>
             </article>
-            <article class="relative rounded-2xl border border-white/10 bg-gradient-to-r from-violet-300/15 to-fuchsia-400/15 p-3 overflow-hidden">
+            <article class="relative rounded-xl bg-white/[0.03] px-3 py-2.5 overflow-hidden">
               <div class="absolute top-[10px] right-[-22px] bg-gradient-to-br from-[#7c3aed] to-[#844aff] text-white text-[9px] font-extrabold px-7 py-[3px] rotate-[35deg] whitespace-nowrap z-10 shadow-[0_2px_8px_rgba(124,58,237,0.55)] tracking-wide">6× points</div>
               <div class="flex items-center gap-2">
-                <img src="assets/video-icon.png" alt="" aria-hidden="true" class="h-7 w-7 shrink-0" />
+                <img src="assets/video-icon.png" alt="" aria-hidden="true" class="h-7 w-7 shrink-0 opacity-90" />
                 <div class="min-w-0">
-                  <h3 class="text-xs font-semibold truncate">Video Calls</h3>
+                  <h3 class="text-xs font-medium text-white/80 truncate">Video Calls</h3>
                   <p class="text-[10px] text-dosttMuted leading-tight mt-0.5 truncate">Earn points by calling</p>
                 </div>
               </div>
@@ -648,8 +722,6 @@ function rewardsPage() {
     </div>
   `;
 }
-
-// ─── Terms page ───────────────────────────────────────────────────────────────
 
 function termsPage() {
   return `
@@ -699,7 +771,7 @@ function termsPage() {
 
         <section>
           <h2 class="text-sm font-semibold text-white mb-2">4. Reward Milestones &amp; Claiming</h2>
-          <p>The Programme is structured across seventeen (17) milestone tiers. Each tier has a defined Dostt Points threshold. Upon reaching a threshold, the corresponding reward becomes available for you to claim. A milestone is unlocked only when your total Dostt Points meet or exceed that tier's threshold.</p>
+          <p>The Programme is structured across nine (9) milestone tiers. Each tier has a defined Dostt Points threshold. Upon reaching a threshold, the corresponding reward becomes available for you to claim. A milestone is unlocked only when your total Dostt Points meet or exceed that tier's threshold.</p>
           <p class="mt-2">Reward claims are subject to verification, and the Company may delay, withhold, or reverse rewards in cases of suspected fraud, abuse, or technical anomalies.</p>
           <p class="mt-2">Each milestone reward may be claimed once per programme cycle (see Section 5 below). Upon a successful claim, the corresponding free coins are credited directly to your Dostt wallet. Claimed rewards cannot be reversed, transferred, or exchanged.</p>
           <p class="mt-2">The Company shall not be liable for loss of rewards due to technical issues beyond its reasonable control; however, nothing in this clause shall limit liability where such limitation is prohibited under applicable law.</p>
@@ -777,8 +849,6 @@ function termsPage() {
   `;
 }
 
-// ─── Render ───────────────────────────────────────────────────────────────────
-
 function render() {
   if (state.showTestModal) {
     root.innerHTML = testModeModal();
@@ -795,13 +865,11 @@ function render() {
       render();
     });
   } else {
-    // Save scroll positions before DOM rebuild so claim clicks don't jump the page
     const prevPageScroll  = document.getElementById("page-scroll")?.scrollTop  || 0;
     const prevTierScroll  = document.querySelector(".reward-scroll")?.scrollTop || 0;
 
     root.innerHTML = rewardsPage();
 
-    // Restore scroll positions immediately after rebuild
     if (prevPageScroll) { const el = document.getElementById("page-scroll");  if (el) el.scrollTop = prevPageScroll; }
     if (prevTierScroll) { const el = document.querySelector(".reward-scroll"); if (el) el.scrollTop = prevTierScroll; }
 
@@ -811,7 +879,6 @@ function render() {
       rewardsRendered = true;
       sweepProgressBar();
     }
-    // Wire tester toolbar claim-type toggle
     document.getElementById("claim-type-toggle")?.addEventListener("click", () => {
       state.claimType = state.claimType === "real" ? "dummy" : "real";
       render();
@@ -843,8 +910,6 @@ function sweepProgressBar() {
   });
 }
 
-// ─── Toast ────────────────────────────────────────────────────────────────────
-
 function clearSession() {
   localStorage.removeItem("dostt_session");
   localStorage.removeItem("dostt_lastRefreshedAt");
@@ -853,6 +918,7 @@ function clearSession() {
   localStorage.removeItem("dostt_testMode");
   localStorage.removeItem("dostt_totalSpent");
   localStorage.removeItem("dostt_claimedTiers");
+  localStorage.removeItem("dostt_lastClaimAt");
   state.view            = "login";
   state.phone           = "";
   state.dosttUserId     = null;
@@ -890,8 +956,6 @@ function showToast(text) {
   }, 1800);
 }
 
-// ─── Coin burst animation ─────────────────────────────────────────────────────
-
 function spawnCoinsAt(cx, cy, count = 5) {
   const angles = count === 4
     ? [-50, -15, 15, 50]
@@ -907,8 +971,6 @@ function spawnCoinsAt(cx, cy, count = 5) {
     coin.addEventListener("animationend", () => coin.remove(), { once: true });
   });
 }
-
-// ─── Coin audio ───────────────────────────────────────────────────────────────
 
 const _coinAudio = new Audio("assets/coin-clink.mp3");
 _coinAudio.preload = "auto";
@@ -943,17 +1005,13 @@ function playCoinClink() {
   } catch (e) { /* audio not available */ }
 }
 
-// ─── Data loading ─────────────────────────────────────────────────────────────
-
 async function loadRewardsData() {
   if (state.testMode === "bypass") {
-    state.totalSpent  = 24350;
+    state.totalSpent  = 10000;
     state.claimed     = new Set();
     state.dataLoading = false;
     return;
   }
-  // Don't set dataLoading = true — cached data may already be showing.
-  // Use dataRefreshing to show a lightweight "Syncing…" indicator instead.
   state.dataRefreshing = true;
   try {
     const realMode = state.testMode === "real";
@@ -967,16 +1025,19 @@ async function loadRewardsData() {
     state.cycleEndDate    = data.cycle?.endDate   || null;
     state.claimed         = new Set(data.claimedTiers || []);
     state.isTester        = data.isTester         || state.isTester;
-    // Persist so values survive page refresh (stale-while-revalidate cache)
+    state.lastClaimAt     = data.lastClaimAt ? new Date(data.lastClaimAt).getTime() : null;
+    state.spendReflectionMinutes = data.spendReflectionMinutes || 10;
     localStorage.setItem("dostt_totalSpent",    String(state.totalSpent));
     localStorage.setItem("dostt_claimedTiers",  JSON.stringify([...state.claimed]));
-    // Always overwrite so stale values from previous cycles don't persist
     if (state.lastRefreshedAt) localStorage.setItem("dostt_lastRefreshedAt", state.lastRefreshedAt);
     else localStorage.removeItem("dostt_lastRefreshedAt");
     if (state.dataUpdatedAt)   localStorage.setItem("dostt_dataUpdatedAt",   state.dataUpdatedAt);
     else localStorage.removeItem("dostt_dataUpdatedAt");
     if (state.cycleEndDate)    localStorage.setItem("dostt_cycleEndDate",     state.cycleEndDate);
     else localStorage.removeItem("dostt_cycleEndDate");
+    if (state.lastClaimAt)     localStorage.setItem("dostt_lastClaimAt",     String(state.lastClaimAt));
+    else localStorage.removeItem("dostt_lastClaimAt");
+    localStorage.setItem("dostt_spendReflectionMinutes", String(state.spendReflectionMinutes));
   } catch (err) {
     console.error("[rewards] Failed to load rewards data:", err.message);
     state.toast = "Could not load rewards. Pull down to refresh.";
@@ -987,28 +1048,52 @@ async function loadRewardsData() {
   }
 }
 
-// ─── Event delegation ─────────────────────────────────────────────────────────
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && event.target.id === "bypass-spend-input") {
+    document.getElementById("bypass-spend-set")?.click();
+  }
+});
 
 window.addEventListener("click", async (event) => {
+  if (event.target.closest("#bypass-spend-set")) {
+    const input = document.getElementById("bypass-spend-input");
+    const value = Math.max(0, Number(input?.value) || 0);
+    state.totalSpent = value;
+    render();
+    sweepProgressBar();
+    return;
+  }
+
+  if (event.target.closest("#bypass-spend-reset")) {
+    state.totalSpent = 0;
+    state.claimed = new Set();
+    state.lastClaimAt = null;
+    render();
+    sweepProgressBar();
+    return;
+  }
+
   const claimButton = event.target.closest(".claim-btn");
   if (claimButton && !claimButton.disabled) {
     const tierId = Number(claimButton.dataset.tier);
 
-    // Mark as in-flight so render() keeps button locked even if DOM rebuilds
     state.claimingTiers.add(tierId);
     render();
+
+    const tier = TIER_DATA.find((t) => t.id === tierId);
 
     if (state.testMode === "bypass") {
       state.claimingTiers.delete(tierId);
       state.claimed.add(tierId);
-      playCoinClink();
-      showToast("Coins added to your wallet!");
+      state.lastClaimAt = Date.now();
+      render();
       sweepProgressBar();
+      openMysteryBoxReveal(tier, coinsFromReward(tier.reward));
       return;
     }
 
     try {
-      await api("/rewards/claim", {
+      const res = await api("/rewards/claim", {
         method: "POST",
         body: JSON.stringify({
           tierId,
@@ -1023,12 +1108,16 @@ window.addEventListener("click", async (event) => {
 
       state.claimingTiers.delete(tierId);
       state.claimed.add(tierId);
-      playCoinClink();
-      showToast(state.claimType === "dummy" ? "Dummy claim logged!" : "Coins added to your wallet!");
+      state.lastClaimAt = res?.lastClaimAt ? new Date(res.lastClaimAt).getTime() : Date.now();
+      localStorage.setItem("dostt_lastClaimAt", String(state.lastClaimAt));
+      render();
       sweepProgressBar();
+
+      const coinsAwarded = (res && res.coinsAwarded) || coinsFromReward(tier.reward);
+      openMysteryBoxReveal(tier, coinsAwarded);
     } catch (err) {
       state.claimingTiers.delete(tierId);
-      // If server says already claimed, sync local state so UI reflects it
+      render();
       if (err.status === 409) {
         state.claimed.add(tierId);
         showToast("Already claimed this cycle");
@@ -1052,14 +1141,132 @@ window.addEventListener("click", async (event) => {
   }
 });
 
-// ─── Pull-to-refresh ──────────────────────────────────────────────────────────
+function openMysteryBoxReveal(tier, coinsAwarded) {
+  const overlay = document.createElement("div");
+  overlay.className = "reveal-overlay";
+  overlay.innerHTML = `
+    <div class="reveal-stage">
+      <div class="celebration-layer"></div>
+      <div class="reveal-box-wrap">
+        <svg viewBox="0 0 120 120" class="reveal-box" id="reveal-box-svg">
+          <defs>
+            <linearGradient id="revealLid" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#c084fc"/>
+              <stop offset="100%" stop-color="#7c3aed"/>
+            </linearGradient>
+            <linearGradient id="revealBody" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#8b5cf6"/>
+              <stop offset="100%" stop-color="#5b21b6"/>
+            </linearGradient>
+          </defs>
+          <g class="reveal-box-lid">
+            <rect x="10" y="34" width="100" height="24" rx="5" fill="url(#revealLid)"/>
+            <path d="M46 34 C46 18 74 18 74 34" fill="none" stroke="#facc15" stroke-width="7" stroke-linecap="round"/>
+          </g>
+          <rect x="16" y="52" width="88" height="52" rx="6" fill="url(#revealBody)"/>
+          <rect x="52" y="34" width="16" height="70" fill="#facc15"/>
+        </svg>
+        <p class="reveal-hint">Opening your Mystery Coins…</p>
+      </div>
+      <div class="reveal-result">
+        <img src="${coinForReward(`FREE ${coinsAwarded} coins`)}" alt="" class="reveal-coin" />
+        <p class="reveal-amount">+${coinsAwarded} coins!</p>
+        <p class="reveal-sub">Added to your wallet</p>
+        <button class="reveal-close">Awesome!</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const boxWrap = overlay.querySelector(".reveal-box-wrap");
+  const boxSvg  = overlay.querySelector("#reveal-box-svg");
+  const result  = overlay.querySelector(".reveal-result");
+  const layer   = overlay.querySelector(".celebration-layer");
+
+  const closeReveal = () => {
+    overlay.classList.add("reveal-closing");
+    setTimeout(() => overlay.remove(), 220);
+  };
+  overlay.querySelector(".reveal-close").addEventListener("click", closeReveal);
+
+  requestAnimationFrame(() => overlay.classList.add("reveal-visible"));
+
+  setTimeout(() => boxSvg.classList.add("box-shake"), 250);
+  setTimeout(() => {
+    boxSvg.classList.remove("box-shake");
+    boxSvg.classList.add("box-burst");
+    boxWrap.classList.add("reveal-hidden");
+    result.classList.add("reveal-result-visible");
+    playCoinClink();
+    spawnCelebration(layer);
+  }, 1250);
+
+  setTimeout(() => {
+    if (document.body.contains(overlay)) closeReveal();
+  }, 5500);
+}
+
+function spawnCelebration(layer) {
+  if (!layer) return;
+  const confettiColors = ["#facc15", "#a855f7", "#f472b6", "#38bdf8", "#4ade80", "#fb923c"];
+  const streamerColors = ["#a855f7", "#f472b6", "#facc15", "#38bdf8"];
+  const balloonColors  = ["#f472b6", "#a855f7", "#facc15", "#38bdf8", "#fb7185"];
+  let html = "";
+
+  for (let i = 0; i < 60; i++) {
+    const left = Math.random() * 100;
+    const delay = Math.random() * 0.4;
+    const duration = 2.2 + Math.random() * 1.4;
+    const color = confettiColors[i % confettiColors.length];
+    const rotate = Math.random() * 360;
+    const drift = (Math.random() * 80 - 40).toFixed(0);
+    const square = i % 2 === 0;
+    html += `<span class="confetti-piece ${square ? "confetti-square" : "confetti-strip"}" style="
+      left:${left}%;
+      background:${color};
+      animation-delay:${delay}s;
+      animation-duration:${duration}s;
+      --rotate:${rotate}deg;
+      --drift:${drift}px;
+    "></span>`;
+  }
+
+  for (let i = 0; i < 10; i++) {
+    const left = 5 + Math.random() * 90;
+    const delay = Math.random() * 0.3;
+    const duration = 2.6 + Math.random() * 1.2;
+    const color = streamerColors[i % streamerColors.length];
+    html += `<span class="streamer-piece" style="
+      left:${left}%;
+      background:${color};
+      animation-delay:${delay}s;
+      animation-duration:${duration}s;
+    "></span>`;
+  }
+
+  for (let i = 0; i < 6; i++) {
+    const left = 8 + Math.random() * 84;
+    const delay = Math.random() * 0.5;
+    const duration = 3.4 + Math.random() * 1.2;
+    const color = balloonColors[i % balloonColors.length];
+    html += `<span class="balloon-piece" style="
+      left:${left}%;
+      background:${color};
+      animation-delay:${delay}s;
+      animation-duration:${duration}s;
+    "><span class="balloon-string"></span></span>`;
+  }
+
+  layer.innerHTML = html;
+  setTimeout(() => { layer.innerHTML = ""; }, 5000);
+}
 
 function initPullToRefresh() {
   const el = document.getElementById("page-scroll");
   const indicator = document.getElementById("ptr-indicator");
   if (!el || !indicator) return;
 
-  const THRESHOLD = 65; // px of pull needed to trigger
+  const THRESHOLD = 65;
   let startY = 0;
   let active  = false;
 
@@ -1084,7 +1291,6 @@ function initPullToRefresh() {
     if (!active) return;
     active = false;
     const delta = e.changedTouches[0].clientY - startY;
-    // Reset indicator
     indicator.style.height = "0";
     indicator.style.opacity = "0";
     if (delta >= THRESHOLD && el.scrollTop === 0 && !state.dataRefreshing) {
@@ -1095,12 +1301,8 @@ function initPullToRefresh() {
   }, { passive: true });
 }
 
-// ─── Session restore ──────────────────────────────────────────────────────────
-
 (async function restoreSession() {
   try {
-    // Auto-login via ?user_id= param (Dostt app banner passes base64-encoded dostt_user_id)
-    // Only fires when there is no existing session — subsequent page loads restore from cache.
     const urlParams      = new URLSearchParams(window.location.search);
     const encodedUserId  = urlParams.get("user_id");
     const existingSession = localStorage.getItem("dostt_session");
@@ -1118,7 +1320,6 @@ function initPullToRefresh() {
             body:   JSON.stringify({ dosttUserId }),
           });
           const country = COUNTRIES.find(c => c.code === (data.user.countryCode || "+91")) || COUNTRIES[0];
-          // phone may be null for brand-new users not yet in the points cache
           localStorage.setItem("dostt_session", JSON.stringify({
             phone:       data.user.phone || null,
             dosttUserId: data.user.dosttUserId,
@@ -1137,7 +1338,6 @@ function initPullToRefresh() {
           return;
         } catch (err) {
           state.loading = false;
-          // auto-login failed → fall through to login page
         }
       }
     }
@@ -1151,17 +1351,19 @@ function initPullToRefresh() {
       state.isTester    = TEST_PHONES.includes(state.phone);
 
       if (state.isTester) {
-        // Restore previous test mode so testers don't have to re-pick on every reload.
-        // If no stored mode, show the modal.
         const savedMode = localStorage.getItem("dostt_testMode");
         if (savedMode && ["api", "direct_select", "bypass", "real"].includes(savedMode)) {
           state.testMode = savedMode;
           state.showTestModal = false;
           state.view = "rewards";
           rewardsRendered = false;
-          render();
-          initLottie();
-          if (savedMode !== "bypass") {
+          if (savedMode === "bypass") {
+            state.dataLoading = false;
+            render();
+            initLottie();
+          } else {
+            render();
+            initLottie();
             loadRewardsData().then(() => { render(); initLottie(); }).catch(() => {});
           }
         } else {
@@ -1169,25 +1371,20 @@ function initPullToRefresh() {
           render();
         }
       } else if (!state.phone && state.dosttUserId) {
-        // Auto-login user whose phone isn't known yet — skip verify, go straight to rewards
         state.view = "rewards";
         render();
         initLottie();
         loadRewardsData().then(() => { render(); initLottie(); }).catch(() => {});
       } else {
-        // Show rewards page immediately for good UX
         state.view = "rewards";
         render();
         initLottie();
 
-        // Re-validate session AND load data in parallel.
-        // Uses /auth/verify (not /auth/login) so re-opens don't spam login_logs.
         const [authResult] = await Promise.allSettled([
           api(`/auth/verify?phone=${encodeURIComponent(state.phone)}&countryCode=${encodeURIComponent(state.country.code)}`),
           loadRewardsData(),
         ]);
 
-        // 403 = phone is not registered on Dostt → kill the stale session
         if (authResult.status === "rejected" && authResult.reason?.status === 403) {
           clearSession();
           rewardsRendered = false;
@@ -1196,15 +1393,12 @@ function initPullToRefresh() {
           setTimeout(() => { state.toast = ""; render(); }, 3500);
           return;
         }
-        // 503 / network errors → let them stay on the page; loadRewardsData already showed an error
       }
     }
   } catch (e) { /* ignore */ }
   render();
   initLottie();
 })();
-
-// ─── Lottie ───────────────────────────────────────────────────────────────────
 
 function initLottie() {
   const container = document.getElementById("coins-lottie");

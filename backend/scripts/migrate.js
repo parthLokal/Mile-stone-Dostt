@@ -30,6 +30,15 @@ const tables = [
     `,
   },
   {
+    name: "users last_claim_at (safe)",
+    sql: `
+      -- Anchor timestamp for the 4-day 'next tier' urgency countdown.
+      -- Set to NOW() every time a claim succeeds; NULL until the user's first claim,
+      -- meaning no countdown is shown before they've claimed anything yet.
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS last_claim_at TIMESTAMPTZ;
+    `,
+  },
+  {
     name: "user_points",
     sql: `
       CREATE TABLE IF NOT EXISTS user_points (

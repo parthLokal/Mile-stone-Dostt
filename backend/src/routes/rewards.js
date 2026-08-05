@@ -7,29 +7,25 @@ const logger = require("../utils/logger");
 const router = express.Router();
 
 // ⚠️ Also defined in: app.js (line ~71) and routes/auth.js (line ~8) — keep all three in sync
-const TEST_PHONES     = ["9988818731"];
-const MAX_TIER_POINTS = 24350;
+const TEST_PHONES     = ["9988818731", "9999999999"];
+const MAX_TIER_POINTS = 10000;
 const CYCLE_DAYS      = Number(process.env.CYCLE_DAYS || 30);
+// How long we tell users to expect before their spend shows up (purely informational —
+// doesn't affect actual refresh timing, just the UI copy). Configurable so it can be
+// adjusted without a code change if the real BigQuery/cache refresh cadence changes.
+const SPEND_REFLECTION_MINUTES = Number(process.env.SPEND_REFLECTION_MINUTES || 10);
 const CYCLE_MS        = CYCLE_DAYS * 24 * 60 * 60 * 1000;
 
 const TIER_DATA = [
-  { id: 1,  unlockAt: 200,   coins: 20 },
-  { id: 2,  unlockAt: 400,   coins: 20 },
-  { id: 3,  unlockAt: 700,   coins: 20 },
-  { id: 4,  unlockAt: 1000,  coins: 30 },
-  { id: 5,  unlockAt: 1400,  coins: 30 },
-  { id: 6,  unlockAt: 1900,  coins: 30 },
-  { id: 7,  unlockAt: 2500,  coins: 40 },
-  { id: 8,  unlockAt: 3200,  coins: 40 },
-  { id: 9,  unlockAt: 4000,  coins: 50 },
-  { id: 10, unlockAt: 4900,  coins: 50 },
-  { id: 11, unlockAt: 6100,  coins: 60 },
-  { id: 12, unlockAt: 7600,  coins: 60 },
-  { id: 13, unlockAt: 9600,  coins: 70 },
-  { id: 14, unlockAt: 12100, coins: 70 },
-  { id: 15, unlockAt: 15350, coins: 80 },
-  { id: 16, unlockAt: 19350, coins: 80 },
-  { id: 17, unlockAt: 24350, coins: 90 },
+  { id: 1, unlockAt: 300,   coins: 75 },
+  { id: 2, unlockAt: 700,   coins: 50 },
+  { id: 3, unlockAt: 1300,  coins: 50 },
+  { id: 4, unlockAt: 2100,  coins: 100 },
+  { id: 5, unlockAt: 3100,  coins: 65 },
+  { id: 6, unlockAt: 4300,  coins: 40 },
+  { id: 7, unlockAt: 5800,  coins: 80 },
+  { id: 8, unlockAt: 7500,  coins: 30 },
+  { id: 9, unlockAt: 10000, coins: 100 },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -359,6 +355,8 @@ router.get("/me", async (req, res) => {
         dataUpdatedAt:   r?.synced_at || null,
         claimedTiers:    [],
         isTester:        false,
+        lastClaimAt:     user?.last_claim_at || null,
+        spendReflectionMinutes: SPEND_REFLECTION_MINUTES,
         cycle: {
           startDate: cycleStart.toISOString(),
           endDate:   new Date(cycleStart.getTime() + CYCLE_MS).toISOString(),
@@ -401,6 +399,8 @@ router.get("/me", async (req, res) => {
       dataUpdatedAt:   points ? points.updated_at : null,
       claimedTiers:    claimedRows.map(r => r.tier_id),
       isTester:        TEST_PHONES.includes(phone), // always true for test phone, even in real mode
+      lastClaimAt:     user?.last_claim_at || null,
+      spendReflectionMinutes: SPEND_REFLECTION_MINUTES,
       cycle: {
         startDate: cycleStart.toISOString(),
         endDate:   cycleEnd.toISOString(),
@@ -585,8 +585,13 @@ router.post("/claim", async (req, res) => {
       return res.status(502).json({ error: userMsg });
     }
 
+    // Anchor point for the 4-day 'next tier' urgency countdown — starts fresh on every claim.
+    const lastClaimAt = new Date();
+    await db.update("users", { phone, country_code: countryCode }, { last_claim_at: lastClaimAt })
+      .catch(e => logger.warn("last_claim_at update failed", { phone, tierId, err: e.message }));
+
     logger.info("claim success", { phone, tierId, coins: tier.coins, cycle: cycleStartDateStr });
-    res.json({ success: true, coinsAwarded: tier.coins, claimed });
+    res.json({ success: true, coinsAwarded: tier.coins, claimed, lastClaimAt: lastClaimAt.toISOString() });
   } catch (err) {
     logger.error("rewards /claim error", { err: err.message });
     res.status(500).json({ error: "Failed to claim reward" });
