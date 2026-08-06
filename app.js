@@ -646,7 +646,7 @@ function rewardsPage() {
                 if (state.dataRefreshing) return "Syncing…";
                 if (state.lastRefreshedAt) return "Updated: " + state.lastRefreshedAt + " IST";
                 if (state.dataUpdatedAt) return "Updated: " + new Date(state.dataUpdatedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) + " IST";
-                return "Refreshes every 2 hrs";
+                return "";
               })()}</p>
             </div>
           </div>
