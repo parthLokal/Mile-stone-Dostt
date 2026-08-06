@@ -689,7 +689,6 @@ function rewardsPage() {
               </div>
             </article>
           </div>
-          <p class="mt-3 text-[10px] text-white/35">Points count from your first login here</p>
         </div>
       </section>
 
