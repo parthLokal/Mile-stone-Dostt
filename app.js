@@ -159,7 +159,7 @@ function countrySheet() {
 
 function loginPage() {
   return `
-    <div class="mx-auto flex h-[100svh] w-full max-w-md flex-col bg-noise px-6">
+    <div class="app-vh mx-auto flex w-full max-w-md flex-col bg-noise px-6">
       <div class="flex flex-1 flex-col justify-center">
         <div class="mb-10 flex flex-col items-center gap-3">
           <img src="assets/dostt_icon.png" alt="Dostt" class="h-16 w-16 object-contain" />
@@ -652,11 +652,11 @@ function rewardsPage() {
 
 
   return `
-    <div id="page-scroll" class="mx-auto w-full max-w-md h-[100svh] overflow-y-auto bg-noise">
+    <div id="page-scroll" class="app-vh mx-auto w-full max-w-md overflow-y-auto bg-noise">
       <div id="ptr-indicator" style="height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;transition:height 0.15s ease;pointer-events:none">
         <div class="h-5 w-5 rounded-full border-2 border-t-transparent border-white/60 animate-spin"></div>
       </div>
-      <div class="flex min-h-[100svh] flex-col">
+      <div class="app-min-vh flex flex-col">
       <header class="relative px-4 pt-5 pb-3 shrink-0">
         <div class="flex items-center gap-3">
           <img src="assets/dostt_icon.png" alt="Dostt" class="h-11 w-11 rounded-2xl" />
@@ -759,7 +759,7 @@ function rewardsPage() {
 
 function termsPage() {
   return `
-    <div class="mx-auto flex h-[100svh] w-full max-w-md flex-col bg-noise">
+    <div class="app-vh mx-auto flex w-full max-w-md flex-col bg-noise">
       <header class="shrink-0 flex items-center gap-3 px-4 pt-5 pb-4 border-b border-white/8">
         <button id="terms-back-btn" class="flex items-center justify-center w-9 h-9 rounded-xl bg-white/8 active:bg-white/15">
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M11 14L6 9L11 4" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
