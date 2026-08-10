@@ -479,9 +479,12 @@ textarea {
 }
 
 .checkpoint-box {
+  /* Fixed height rather than aspect-ratio (Chrome < 88 / older Android
+     WebView don't support aspect-ratio, which collapsed this button's
+     height to ~0 — it still looked fine but was unTappable). */
   width: 100%;
   max-width: 32px;
-  aspect-ratio: 1 / 1;
+  height: 32px;
   justify-self: center;
   border-radius: 10px;
   padding: 3px;
