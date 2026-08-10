@@ -13,15 +13,17 @@ const TIER_DATA = [
   { id: 9, unlockAt: 10000, reward: "FREE 100 coins", rangeLabel: "Up to 250 coins" },
 ];
 
-const COINS = ["assets/coin-01.png", "assets/coin-02.png", "assets/coin-03.png", "assets/coin-04.png"];
+// 12-step visual progression, from a couple of loose coins up to an overflowing
+// wheelbarrow — spread across the tier list so the reward image gets more
+// elaborate the further a user climbs, regardless of that tier's actual payout.
+const REWARD_IMAGES = Array.from({ length: 12 }, (_, i) => `assets/reward-${String(i + 1).padStart(2, "0")}.png`);
 
-function coinForReward(reward) {
-  const match = reward.match(/FREE\s+(\d+)\s+coins/i);
-  const amount = match ? Number(match[1]) : 0;
-  if (amount <= 40) return COINS[0];
-  if (amount <= 70) return COINS[1];
-  if (amount <= 90) return COINS[2];
-  return COINS[3];
+function coinForReward(tier) {
+  const idx = TIER_DATA.findIndex(t => t.id === tier.id);
+  const step = idx === -1
+    ? 0
+    : Math.round(idx * (REWARD_IMAGES.length - 1) / Math.max(1, TIER_DATA.length - 1));
+  return REWARD_IMAGES[step];
 }
 
 function coinsFromReward(reward) {
@@ -29,9 +31,9 @@ function coinsFromReward(reward) {
   return match ? Number(match[1]) : 0;
 }
 
-function mysteryBoxIcon() {
+function mysteryBoxIcon(sizeClass = "w-20 h-20 shrink-0") {
   return `
-    <svg viewBox="0 0 56 56" class="w-20 h-20 shrink-0" aria-hidden="true">
+    <svg viewBox="0 0 56 56" class="${sizeClass}" aria-hidden="true">
       <defs>
         <linearGradient id="boxLid" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="#a855f7"/>
@@ -518,13 +520,13 @@ function tierCard(tier, isNextUp = false) {
   }
 
   return `
-    <div class="tier-row ${isClaimed ? "is-claimed" : ""}">
+    <div id="tier-anchor-${tier.id}" class="tier-row ${isClaimed ? "is-claimed" : ""}">
       <div class="tier-indicator ${dotClass}">${dotContent}</div>
       <article class="tier-card flex-1 ${shellClass}">
         <div class="tier-body">
           <div class="flex items-center gap-3">
             <div class="${claimable ? "mystery-box-jump" : ""}">${isClaimed
-              ? `<img src="${coinForReward(tier.reward)}" alt="" aria-hidden="true" class="w-20 h-20 shrink-0 object-contain" />`
+              ? `<img src="${coinForReward(tier)}" alt="" aria-hidden="true" class="w-20 h-20 shrink-0 object-contain" />`
               : mysteryBoxIcon()}</div>
             <div class="min-w-0 flex-1">
               <p class="text-[13px] font-semibold leading-tight">${isClaimed ? tier.reward : "Mystery Coins"}</p>
@@ -549,6 +551,39 @@ function tierCard(tier, isNextUp = false) {
                </div>`}
         </div>
       </article>
+    </div>
+  `;
+}
+
+function checkpointsRow() {
+  const isDirectSelect = state.testMode === "direct_select";
+  // Box and connector columns alternate — the connector is a short fixed-width
+  // "string" segment that only fills the gap, never running under a box.
+  const gridCols = TIER_DATA.map((_, i) => i < TIER_DATA.length - 1 ? "minmax(0, 1fr) 10px" : "minmax(0, 1fr)").join(" ");
+  const cells = TIER_DATA.map((tier, i) => {
+    const isClaimed = state.claimed.has(tier.id);
+    // Eligibility here is spend-based only (no sequential gating) — a user who has
+    // spent past several thresholds should see every earned box lit up at once, even
+    // though the actual claim flow still requires claiming tiers in order.
+    const eligible = !state.dataLoading && !isClaimed && (state.totalSpent >= tier.unlockAt || isDirectSelect);
+    const boxClass = isClaimed ? "checkpoint-claimed" : eligible ? "checkpoint-lit" : "checkpoint-dark";
+    const icon = isClaimed
+      ? `<img src="${coinForReward(tier)}" alt="" aria-hidden="true" class="w-full h-full object-contain" />`
+      : mysteryBoxIcon("w-full h-full");
+    const box = `
+      <button
+        class="checkpoint-box ${boxClass}"
+        data-tier="${tier.id}"
+        aria-label="Milestone ${tier.id}${isClaimed ? " — claimed" : eligible ? " — ready to claim" : ""}"
+      >${icon}</button>
+    `;
+    const connector = i < TIER_DATA.length - 1 ? `<div class="checkpoint-connector"></div>` : "";
+    return box + connector;
+  }).join("");
+
+  return `
+    <div class="checkpoints-row mx-4 mb-3 grid items-center rounded-2xl border border-white/10 bg-white/[0.03] px-2 py-2.5 shrink-0" style="grid-template-columns: ${gridCols};">
+      ${cells}
     </div>
   `;
 }
@@ -611,7 +646,8 @@ function rewardsPage() {
   const firstUnclaimed = TIER_DATA.find(t => !state.claimed.has(t.id));
   const firstUnclaimedId = firstUnclaimed ? firstUnclaimed.id : null;
   const target = firstUnclaimed ? firstUnclaimed.unlockAt : TIER_DATA[TIER_DATA.length - 1].unlockAt;
-  const ratio = Math.min((effectiveTotalSpent / target) * 100, 100);
+  // Floor the fill so the bar always shows a sliver of progress, even at 0 spend.
+  const ratio = Math.max(4, Math.min((effectiveTotalSpent / target) * 100, 100));
   const remainingToNext = Math.max(0, target - effectiveTotalSpent);
 
 
@@ -635,9 +671,6 @@ function rewardsPage() {
       ${state.isTester ? testerToolbar() : ""}
 
       <section class="mx-3 mt-4 rounded-3xl border border-white/10 bg-[#1a2230] p-5 shadow-soft progress-card">
-        <div class="lottie-wrap">
-          <div id="coins-lottie" class="lottie-canvas" aria-hidden="true"></div>
-        </div>
         <div>
           <div class="flex items-center justify-between">
             <p class="text-[11px] uppercase tracking-widest text-white/60">Your Progress</p>
@@ -659,32 +692,36 @@ function rewardsPage() {
           }</p>
         </div>
         <div class="relative mt-3 h-3 rounded-full bg-white/10">
-          <div id="progress-bar-fill" data-target="${ratio}%" class="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#7c3aed] to-[#844aff] transition-all duration-500" style="width:${ratio}%"></div>
+          <div id="progress-bar-fill" data-target="${ratio}%" class="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#7c3aed] to-[#844aff] transition-all duration-500" style="width:${ratio}%">
+            <img src="assets/dostt-coin.png" alt="" aria-hidden="true" class="progress-bar-coin absolute top-1/2 -translate-y-1/2 translate-x-1/2 drop-shadow-[0_0_4px_rgba(139,92,246,0.6)]" style="right:0" />
+          </div>
         </div>
-        <p class="mt-2 text-xs font-semibold text-yellow-300 text-center leading-relaxed">Your progress will be updated within ${state.spendReflectionMinutes} minutes.<br />Patience is key to your reward!</p>
+        <p class="mt-2 text-xs font-semibold text-yellow-300 text-center leading-relaxed">Your progress will be updated within ${state.spendReflectionMinutes} minutes.</p>
         ${(() => {
           const text = getNextTierCountdownText(firstUnclaimed);
           if (!text) return "";
           return `<p id="next-tier-countdown" class="mt-2 text-base font-bold text-amber-300">${text}</p>`;
         })()}
         <div class="mt-4">
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-2 gap-3 items-end">
             <article class="rounded-xl bg-white/[0.03] px-3 py-2.5">
               <div class="flex items-center gap-2">
                 <img src="assets/audio-icon.png" alt="" aria-hidden="true" class="h-6 w-6 shrink-0 opacity-90" />
                 <div class="min-w-0">
                   <h3 class="text-xs font-medium text-white/80 truncate">Audio Calls</h3>
-                  <p class="text-[10px] text-dosttMuted leading-tight mt-0.5 truncate">Earn points by calling</p>
+                  <p class="text-[10px] text-dosttMuted leading-tight mt-0.5 truncate">Start your journey</p>
                 </div>
               </div>
             </article>
-            <article class="relative rounded-xl bg-white/[0.03] px-3 py-2.5 overflow-hidden">
-              <div class="absolute top-[10px] right-[-22px] bg-gradient-to-br from-[#7c3aed] to-[#844aff] text-white text-[9px] font-extrabold px-7 py-[3px] rotate-[35deg] whitespace-nowrap z-10 shadow-[0_2px_8px_rgba(124,58,237,0.55)] tracking-wide">6× points</div>
-              <div class="flex items-center gap-2">
+            <article class="flex flex-col rounded-xl bg-white/[0.03] overflow-hidden">
+              <div class="flex h-6 shrink-0 items-center justify-center bg-gradient-to-r from-[#7c3aed] to-[#844aff]">
+                <span class="text-[10px] font-extrabold text-white tracking-wide">6× FASTER</span>
+              </div>
+              <div class="flex items-center gap-2 px-3 py-3">
                 <img src="assets/video-icon.png" alt="" aria-hidden="true" class="h-7 w-7 shrink-0 opacity-90" />
                 <div class="min-w-0">
                   <h3 class="text-xs font-medium text-white/80 truncate">Video Calls</h3>
-                  <p class="text-[10px] text-dosttMuted leading-tight mt-0.5 truncate">Earn points by calling</p>
+                  <p class="text-[10px] text-dosttMuted leading-tight mt-0.5 truncate">Start your journey</p>
                 </div>
               </div>
             </article>
@@ -692,12 +729,13 @@ function rewardsPage() {
         </div>
       </section>
 
-      <section class="mx-3 mt-4 mb-2 flex flex-col" style="flex:1 1 0;min-height:clamp(280px,40vh,500px)">
-        <div class="flex min-h-0 flex-1 flex-col rounded-3xl border border-white/10 bg-[#1a2230] shadow-soft overflow-hidden">
+      <section class="mx-3 mt-4 mb-2">
+        <div class="flex flex-col rounded-3xl border border-white/10 bg-[#1a2230] shadow-soft">
           <div class="px-4 pt-4 pb-2 shrink-0">
             <h2 class="text-base font-semibold">Free Rewards</h2>
           </div>
-          <div class="reward-scroll flex-1 min-h-0 space-y-3 overflow-y-auto pl-3 pr-4 pb-4">
+          ${checkpointsRow()}
+          <div class="reward-scroll space-y-3 pl-3 pr-4 pb-4">
             ${TIER_DATA.map(t => tierCard(t, t.id === firstUnclaimedId)).join("")}
           </div>
         </div>
@@ -705,9 +743,6 @@ function rewardsPage() {
       </div>
 
       <div class="flex flex-col items-center gap-3 py-10">
-        <button id="logout-btn" class="text-sm font-semibold text-white tracking-wide px-6 py-2">
-          Log out
-        </button>
         <button id="terms-btn-rewards" class="text-xs text-white/40">
           Terms &amp; Conditions
         </button>
@@ -1072,6 +1107,20 @@ window.addEventListener("click", async (event) => {
     return;
   }
 
+  const checkpointBox = event.target.closest(".checkpoint-box");
+  if (checkpointBox) {
+    const clickedTier = Number(checkpointBox.dataset.tier);
+    // Claiming is sequential — jumping to a box past the next claimable tier would
+    // land on a card the user can't act on yet, so redirect to the first unclaimed
+    // tier instead (a no-op if the clicked box already is the next one to claim).
+    const targetTier = state.claimed.has(clickedTier)
+      ? clickedTier
+      : (TIER_DATA.find(t => !state.claimed.has(t.id))?.id ?? clickedTier);
+    document.getElementById(`tier-anchor-${targetTier}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+
   const claimButton = event.target.closest(".claim-btn");
   if (claimButton && !claimButton.disabled) {
     const tierId = Number(claimButton.dataset.tier);
@@ -1168,7 +1217,7 @@ function openMysteryBoxReveal(tier, coinsAwarded) {
         <p class="reveal-hint">Opening your Mystery Coins…</p>
       </div>
       <div class="reveal-result">
-        <img src="${coinForReward(`FREE ${coinsAwarded} coins`)}" alt="" class="reveal-coin" />
+        <img src="${coinForReward(tier)}" alt="" class="reveal-coin" />
         <p class="reveal-amount">+${coinsAwarded} coins!</p>
         <p class="reveal-sub">Added to your wallet</p>
         <button class="reveal-close">Awesome!</button>
