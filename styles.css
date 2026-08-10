@@ -539,6 +539,9 @@ textarea {
 
 .reveal-overlay.reveal-closing {
   opacity: 0;
+  /* A fast tap during the 220ms fade-out shouldn't be swallowed by the
+     (visually gone but still-present) overlay instead of reaching the page. */
+  pointer-events: none;
 }
 
 .reveal-stage {

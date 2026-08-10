@@ -1111,13 +1111,14 @@ window.addEventListener("click", async (event) => {
 
   const checkpointBox = event.target.closest(".checkpoint-box");
   if (checkpointBox) {
+    // Claiming is sequential — every tap, regardless of which box was tapped,
+    // should land on the next actually-claimable tier. Only fall back to the
+    // tapped box itself once every tier is claimed. (Previously, tapping a box
+    // that was ALREADY claimed re-targeted itself instead of advancing — so
+    // re-tapping the same checkpoint after claiming it looked like a dead tap.)
     const clickedTier = Number(checkpointBox.dataset.tier);
-    // Claiming is sequential — jumping to a box past the next claimable tier would
-    // land on a card the user can't act on yet, so redirect to the first unclaimed
-    // tier instead (a no-op if the clicked box already is the next one to claim).
-    const targetTier = state.claimed.has(clickedTier)
-      ? clickedTier
-      : (TIER_DATA.find(t => !state.claimed.has(t.id))?.id ?? clickedTier);
+    const firstUnclaimed = TIER_DATA.find(t => !state.claimed.has(t.id));
+    const targetTier = firstUnclaimed ? firstUnclaimed.id : clickedTier;
     document.getElementById(`tier-anchor-${targetTier}`)
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
     return;
