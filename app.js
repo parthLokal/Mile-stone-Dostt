@@ -1041,8 +1041,10 @@ function playCoinClink() {
 
 async function loadRewardsData() {
   if (state.testMode === "bypass") {
-    state.totalSpent  = 10000;
-    state.claimed     = new Set();
+    // Bypass mode never talks to the server, so refreshing (pull-to-refresh,
+    // session-restore on resume, etc.) must be a no-op — it used to reset
+    // totalSpent/claimed on every call, silently wiping whatever the tester
+    // had just claimed in this session.
     state.dataLoading = false;
     return;
   }
