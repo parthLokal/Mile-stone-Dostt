@@ -142,7 +142,7 @@ async function getOrRefreshPoints(phone, countryCode, realMode = false) {
   }
 
   // Fast path: returning users with a confirmed baseline are served instantly from
-  // points_raw_cache (synced every 30 min) without waiting for Redash.
+  // points_raw_cache (synced every SPEND_ACTUAL_MINUTES) without waiting for Redash.
   // New users (baseline = -1) still go through Redash so their baseline can be set.
   const hasConfirmedBaseline = userRecord && Number(userRecord.cycle_baseline_points) >= 0;
   if (hasConfirmedBaseline && !realMode) {
@@ -178,7 +178,7 @@ async function getOrRefreshPoints(phone, countryCode, realMode = false) {
     rows = await runQuery(queryId, { user_id: dosttUserId }, 0);
   } catch (err) {
     logger.warn("Redash points fetch failed, falling back to raw cache", { phone, err: err.message });
-    // Try points_raw_cache (bulk-synced every 30 min) with inline baseline adjustment
+    // Try points_raw_cache (bulk-synced every SPEND_ACTUAL_MINUTES) with inline baseline adjustment
     try {
       const cacheRows = await db.query(
         `SELECT p.*, u.cycle_baseline_points

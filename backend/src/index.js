@@ -56,14 +56,14 @@ function scheduleAuditCleanup(db) {
   setInterval(prune, INTERVAL_MS);
 }
 
-// ── Bulk points cache sync (every 30 min, query 18796) ────────────────────────
+// ── Bulk points cache sync (every SPEND_ACTUAL_MINUTES, query 18796) ─────────
 // Pulls all banner-funnel users from BQ via a single non-parameterized Redash
 // query and bulk-upserts raw spend data into points_raw_cache. If Redash fails
 // on a live /rewards/me request, the backend falls back to this table.
 function scheduleRawCacheSync(db) {
   const redash     = require("./services/redash");
   const queryId    = Number(process.env.REDASH_ALL_USERS_QUERY_ID);
-  const INTERVAL_MS = 30 * 60 * 1000;
+  const INTERVAL_MS = Number(process.env.SPEND_ACTUAL_MINUTES || 30) * 60 * 1000;
 
   async function sync() {
     if (!queryId) return;

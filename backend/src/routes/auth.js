@@ -150,7 +150,7 @@ router.post("/login", async (req, res) => {
 // Auto-login path used when the Dostt app banner passes ?user_id=<base64> in the URL.
 // dostt_user_id is the primary identifier — phone is resolved opportunistically and
 // stored when available. If phone is not yet in cache the user is still logged in
-// with 0 points; the 30-min points_raw_cache sync backfills phone automatically.
+// with 0 points; the SPEND_ACTUAL_MINUTES-interval points_raw_cache sync backfills phone automatically.
 // Resolution order: users table (returning) → points_raw_cache (banner cohort)
 router.post("/login-by-userid", async (req, res) => {
   const { dosttUserId } = req.body;
@@ -173,7 +173,7 @@ router.post("/login-by-userid", async (req, res) => {
     );
     if (existingRows.length) phone = existingRows[0].phone || null;
 
-    // 2. Banner cohort — points_raw_cache has mobile_no (synced every 30 min)
+    // 2. Banner cohort — points_raw_cache has mobile_no (synced every SPEND_ACTUAL_MINUTES)
     if (!phone) {
       const cacheRows = await db.query(
         "SELECT mobile_no, raw_total_spent FROM points_raw_cache WHERE dostt_user_id = $1 LIMIT 1",
@@ -197,7 +197,7 @@ router.post("/login-by-userid", async (req, res) => {
       await db.update("users", { phone, country_code: countryCode }, updates);
     } else {
       // Phone not yet in cache — create a user record keyed by dostt_user_id only.
-      // The 30-min sync will backfill phone from points_raw_cache.mobile_no.
+      // The periodic sync will backfill phone from points_raw_cache.mobile_no.
       await db.query(
         `INSERT INTO users (dostt_user_id, country_code, cycle_start_date, cycle_baseline_points)
          VALUES ($1, $2, NOW(), 0)
