@@ -375,6 +375,79 @@ const tables = [
     `,
   },
 
+  // ── Fix v_eligible_not_claimed / v_tier_status (points_raw_cache + current tiers) ─
+  // These were reading from user_points, which stopped being written to once the
+  // confirmed-baseline fast path in getOrRefreshPoints() (rewards.js) started serving
+  // returning users straight from points_raw_cache without writing back — so both
+  // views silently went stale/empty. Also still had the old 17-tier list from before
+  // the Milestone Rewards V2 redesign. Rebuilt against points_raw_cache (joined via
+  // dostt_user_id, with the baseline subtraction applied in SQL) and the current
+  // 9-tier structure. Dropped + recreated (not CREATE OR REPLACE) because the column
+  // list changes (adds country_code), which CREATE OR REPLACE VIEW doesn't allow.
+  {
+    name: "view: v_eligible_not_claimed + v_tier_status (points_raw_cache, current tiers)",
+    sql: `
+      DROP VIEW IF EXISTS v_eligible_not_claimed CASCADE;
+      DROP VIEW IF EXISTS v_tier_status CASCADE;
+
+      CREATE VIEW v_eligible_not_claimed AS
+      SELECT
+        u.phone,
+        u.country_code,
+        GREATEST(0, prc.raw_total_spent - GREATEST(0, u.cycle_baseline_points)) AS total_spent,
+        t.tier_id,
+        t.unlock_at,
+        t.coins
+      FROM users u
+      JOIN points_raw_cache prc ON prc.dostt_user_id = u.dostt_user_id
+      CROSS JOIN (
+        VALUES
+          (1,300,75),(2,700,50),(3,1300,50),(4,2100,100),(5,3100,65),
+          (6,4300,40),(7,5800,80),(8,7500,30),(9,10000,100)
+      ) AS t(tier_id, unlock_at, coins)
+      WHERE u.cycle_baseline_points >= 0
+        AND GREATEST(0, prc.raw_total_spent - GREATEST(0, u.cycle_baseline_points)) >= t.unlock_at
+        AND NOT EXISTS (
+          SELECT 1 FROM claimed_rewards cr
+          WHERE cr.phone            = u.phone
+            AND cr.country_code     = u.country_code
+            AND cr.tier_id          = t.tier_id
+            AND cr.cycle_start_date = u.cycle_start_date::DATE
+        )
+      ORDER BY total_spent DESC, t.tier_id;
+
+      CREATE VIEW v_tier_status AS
+      SELECT
+        u.phone,
+        u.country_code,
+        GREATEST(0, prc.raw_total_spent - GREATEST(0, u.cycle_baseline_points)) AS total_spent,
+        t.tier_id,
+        t.unlock_at,
+        t.coins,
+        CASE
+          WHEN cr.id IS NOT NULL THEN 'claimed'
+          WHEN GREATEST(0, prc.raw_total_spent - GREATEST(0, u.cycle_baseline_points)) >= t.unlock_at THEN 'eligible'
+          ELSE 'locked'
+        END AS status,
+        cr.claimed_at,
+        cr.coins_awarded
+      FROM users u
+      JOIN points_raw_cache prc ON prc.dostt_user_id = u.dostt_user_id
+      CROSS JOIN (
+        VALUES
+          (1,300,75),(2,700,50),(3,1300,50),(4,2100,100),(5,3100,65),
+          (6,4300,40),(7,5800,80),(8,7500,30),(9,10000,100)
+      ) AS t(tier_id, unlock_at, coins)
+      LEFT JOIN claimed_rewards cr
+        ON cr.phone            = u.phone
+       AND cr.country_code     = u.country_code
+       AND cr.tier_id          = t.tier_id
+       AND cr.cycle_start_date = u.cycle_start_date::DATE
+      WHERE u.cycle_baseline_points >= 0
+      ORDER BY total_spent DESC, t.tier_id;
+    `,
+  },
+
   // ── Auto-login without phone (dostt_user_id as primary identifier) ───────────
   {
     name: "users phone nullable (safe)",
