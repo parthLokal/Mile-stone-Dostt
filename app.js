@@ -37,6 +37,16 @@ function coinForReward(tier) {
   return REWARD_IMAGES[step];
 }
 
+// Old (ineligible) accounts must see exactly the pre-welcome-gift experience —
+// no tier-0 card, no "not available" messaging, no 10th checkpoint box. Only
+// render tier 0 once it's actually available to this user (or already claimed,
+// so it doesn't vanish mid-reveal after a claim while state settles).
+function visibleTierData() {
+  return (state.welcomeBonusAvailable || state.claimed.has(0))
+    ? TIER_DATA
+    : TIER_DATA.filter((t) => t.id !== 0);
+}
+
 function coinsFromReward(reward) {
   const match = String(reward).match(/(\d+)/);
   return match ? Number(match[1]) : 0;
@@ -582,9 +592,7 @@ function tierCard(tier, isNextUp = false) {
                  ${tier.rangeLabel ? `<p class="reward-range-badge">🎁 Win ${tier.rangeLabel}</p>` : ""}
                  <p class="mt-1 text-xs text-dosttMuted">${claimable
                    ? "Ready to claim!"
-                   : isWelcomeGift
-                     ? "Not available for this account"
-                     : !prevTierClaimed
+                   : !prevTierClaimed
                        ? `Claim tier ${tier.id - 1} first`
                        : `${Math.max(0, tier.unlockAt - state.totalSpent)} more coins to spend`}</p>
                </div>`}
@@ -596,10 +604,11 @@ function tierCard(tier, isNextUp = false) {
 
 function checkpointsRow() {
   const isDirectSelect = state.testMode === "direct_select";
+  const tiers = visibleTierData();
   // Box and connector columns alternate — the connector is a short fixed-width
   // "string" segment that only fills the gap, never running under a box.
-  const gridCols = TIER_DATA.map((_, i) => i < TIER_DATA.length - 1 ? "minmax(0, 1fr) 10px" : "minmax(0, 1fr)").join(" ");
-  const cells = TIER_DATA.map((tier, i) => {
+  const gridCols = tiers.map((_, i) => i < tiers.length - 1 ? "minmax(0, 1fr) 10px" : "minmax(0, 1fr)").join(" ");
+  const cells = tiers.map((tier, i) => {
     const isClaimed = state.claimed.has(tier.id);
     // Eligibility here is spend-based only (no sequential gating) — a user who has
     // spent past several thresholds should see every earned box lit up at once, even
@@ -618,7 +627,7 @@ function checkpointsRow() {
         aria-label="Milestone ${tier.id}${isClaimed ? " — claimed" : eligible ? " — ready to claim" : ""}"
       >${icon}</button>
     `;
-    const connector = i < TIER_DATA.length - 1 ? `<div class="checkpoint-connector"></div>` : "";
+    const connector = i < tiers.length - 1 ? `<div class="checkpoint-connector"></div>` : "";
     return box + connector;
   }).join("");
 
@@ -669,7 +678,7 @@ function getNextTierCountdownText(nextTier) {
 function updateNextTierCountdown() {
   const el = document.getElementById("next-tier-countdown");
   if (!el) return;
-  const nextTier = TIER_DATA.find((t) => !state.claimed.has(t.id));
+  const nextTier = visibleTierData().find((t) => !state.claimed.has(t.id));
   const text = getNextTierCountdownText(nextTier);
   if (!text) { el.remove(); return; }
   el.textContent = text;
@@ -683,7 +692,7 @@ if (!window._countdownIntervalStarted) {
 function rewardsPage() {
   const isDirectSelect = state.testMode === "direct_select";
 
-  const firstUnclaimed = TIER_DATA.find(t => !state.claimed.has(t.id));
+  const firstUnclaimed = visibleTierData().find(t => !state.claimed.has(t.id));
   const firstUnclaimedId = firstUnclaimed ? firstUnclaimed.id : null;
   const target = firstUnclaimed ? firstUnclaimed.unlockAt : TIER_DATA[TIER_DATA.length - 1].unlockAt;
   const effectiveTotalSpent = isDirectSelect ? 10000 : state.totalSpent;
@@ -778,7 +787,7 @@ function rewardsPage() {
           </div>
           ${checkpointsRow()}
           <div class="reward-scroll space-y-3 pl-3 pr-4 pb-4">
-            ${TIER_DATA.map(t => tierCard(t, t.id === firstUnclaimedId)).join("")}
+            ${visibleTierData().map(t => tierCard(t, t.id === firstUnclaimedId)).join("")}
           </div>
         </div>
       </section>
@@ -1160,7 +1169,7 @@ window.addEventListener("click", async (event) => {
     // that was ALREADY claimed re-targeted itself instead of advancing — so
     // re-tapping the same checkpoint after claiming it looked like a dead tap.)
     const clickedTier = Number(checkpointBox.dataset.tier);
-    const firstUnclaimed = TIER_DATA.find(t => !state.claimed.has(t.id));
+    const firstUnclaimed = visibleTierData().find(t => !state.claimed.has(t.id));
     const targetTier = firstUnclaimed ? firstUnclaimed.id : clickedTier;
     document.getElementById(`tier-anchor-${targetTier}`)
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
