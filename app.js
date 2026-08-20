@@ -2,6 +2,10 @@
 // reward = actual fixed payout (kept, but no longer shown pre-claim — revealed after opening the mystery box)
 // rangeLabel = TEASER shown on the sealed box (deliberately different from the real payout to build anticipation)
 const TIER_DATA = [
+  // Welcome gift — not spend-gated at all. Claimable only when
+  // state.welcomeBonusAvailable is true (first-ever login). rangeLabel is
+  // intentionally omitted: this one has a fixed payout, no range to tease.
+  { id: 0, unlockAt: 0,     reward: "FREE 20 coins",  rangeLabel: null },
   { id: 1, unlockAt: 300,   reward: "FREE 75 coins",  rangeLabel: "20–75 coins" },
   { id: 2, unlockAt: 700,   reward: "FREE 50 coins",  rangeLabel: "30–80 coins" },
   { id: 3, unlockAt: 1300,  reward: "FREE 50 coins",  rangeLabel: "40–90 coins" },
@@ -18,11 +22,18 @@ const TIER_DATA = [
 // elaborate the further a user climbs, regardless of that tier's actual payout.
 const REWARD_IMAGES = Array.from({ length: 12 }, (_, i) => `assets/reward-${String(i + 1).padStart(2, "0")}.png`);
 
+// Tier 0 (welcome gift) is excluded from the spread below on purpose — it
+// always gets the simplest image, fixed. Otherwise, adding it to TIER_DATA
+// would shift every other tier's image by one step (a 9-tier spread vs. a
+// 10-tier spread lands on different rounded indices), silently changing the
+// already-claimed reward artwork for existing users' tiers 1-9.
 function coinForReward(tier) {
-  const idx = TIER_DATA.findIndex(t => t.id === tier.id);
+  if (tier.id === 0) return REWARD_IMAGES[0];
+  const realTiers = TIER_DATA.filter(t => t.id !== 0);
+  const idx = realTiers.findIndex(t => t.id === tier.id);
   const step = idx === -1
     ? 0
-    : Math.round(idx * (REWARD_IMAGES.length - 1) / Math.max(1, TIER_DATA.length - 1));
+    : Math.round(idx * (REWARD_IMAGES.length - 1) / Math.max(1, realTiers.length - 1));
   return REWARD_IMAGES[step];
 }
 
@@ -77,17 +88,26 @@ async function api(path, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30000);
   try {
-    const res = await fetch(`${API_BASE}${path}`, {
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      ...options,
-    });
+    let res;
+    try {
+      res = await fetch(`${API_BASE}${path}`, {
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        ...options,
+      });
+    } catch (networkErr) {
+      // fetch() itself rejects (not a non-2xx response) when the server can't be
+      // reached at all — wrong host, CORS, DNS, connection refused, or timeout.
+      // The raw browser message ("Failed to fetch" / "Load failed" / etc.) isn't
+      // meaningful to a user, so translate it into something actionable.
+      if (networkErr.name === "AbortError") {
+        throw Object.assign(new Error("Request timed out. Please try again."), { status: 408 });
+      }
+      throw Object.assign(new Error("Could not reach the server. Check your connection and try again."), { status: 0, cause: networkErr });
+    }
     const data = await res.json();
     if (!res.ok) throw Object.assign(new Error(data.error || "Request failed"), { status: res.status, data });
     return data;
-  } catch (err) {
-    if (err.name === "AbortError") throw Object.assign(new Error("Request timed out. Please try again."), { status: 408 });
-    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -122,6 +142,10 @@ const state = {
   claimType: "real",
   showTestModal: false,
   dosttUserId: null,
+  // First-ever-login welcome gift: tier 1 becomes claimable with zero spend,
+  // for a fixed 15 coins, the very first time this browser logs in. Cleared
+  // once claimed (see the bypass claim branch and the real-login handler).
+  welcomeBonusAvailable: localStorage.getItem("dostt_welcomeBonusAvailable") === "true",
 };
 
 const root = document.getElementById("root");
@@ -231,6 +255,10 @@ function wireLoginEvents() {
         method: "POST",
         body: JSON.stringify({ phone, countryCode: state.country.code }),
       });
+      // Welcome-gift eligibility for real users comes from the backend (account
+      // creation date vs. launch date, checked server-side) — not guessed from
+      // whether this browser has a saved session, which a reinstall or cleared
+      // cache would make unreliable. Set by loadRewardsData() below.
       localStorage.setItem("dostt_session", JSON.stringify({ phone, country: state.country }));
       state.isTester = data.isTester || false;
 
@@ -397,6 +425,10 @@ function wireTestModal() {
     state.totalSpent = 0;
     state.claimed = new Set();
     state.dataLoading = false;
+    // Bypass is a full sandbox reset, so treat every entry as a fresh
+    // "first login" — makes the welcome-gift design repeatable to demo.
+    state.welcomeBonusAvailable = true;
+    localStorage.setItem("dostt_welcomeBonusAvailable", "true");
     rewardsRendered = false;
     render();
   });
@@ -477,8 +509,13 @@ function tierCard(tier, isNextUp = false) {
   const isClaimed   = state.claimed.has(tier.id);
   const isClaiming  = state.claimingTiers.has(tier.id);
   const isDirectSelect = state.testMode === "direct_select";
-  const prevTierClaimed = tier.id === 1 || state.claimed.has(tier.id - 1);
-  const claimable = !state.dataLoading && (state.totalSpent >= tier.unlockAt || isDirectSelect) && !isClaimed && prevTierClaimed;
+  // Tier 1 deliberately does NOT require the welcome gift (tier 0) to be
+  // claimed first — it's an independent bonus, not part of the main chain,
+  // so tiers 1-9 behave exactly as they did before it existed.
+  const prevTierClaimed = tier.id <= 1 || state.claimed.has(tier.id - 1);
+  const isWelcomeGift = tier.id === 0;
+  const meetsThreshold = isWelcomeGift ? state.welcomeBonusAvailable : state.totalSpent >= tier.unlockAt;
+  const claimable = !state.dataLoading && (meetsThreshold || isDirectSelect) && !isClaimed && prevTierClaimed;
   const locked = !claimable && !isClaimed;
 
   const shellClass = locked
@@ -542,12 +579,14 @@ function tierCard(tier, isNextUp = false) {
           ${isClaimed
             ? `<p class="mt-1.5 pl-[92px] text-xs text-dosttMuted">Opened</p>`
             : `<div class="mt-1.5 pl-[92px]">
-                 <p class="reward-range-badge">🎁 Win ${tier.rangeLabel}</p>
+                 ${tier.rangeLabel ? `<p class="reward-range-badge">🎁 Win ${tier.rangeLabel}</p>` : ""}
                  <p class="mt-1 text-xs text-dosttMuted">${claimable
                    ? "Ready to claim!"
-                   : !prevTierClaimed
-                     ? `Claim tier ${tier.id - 1} first`
-                     : `${Math.max(0, tier.unlockAt - state.totalSpent)} more coins to spend`}</p>
+                   : isWelcomeGift
+                     ? "Not available for this account"
+                     : !prevTierClaimed
+                       ? `Claim tier ${tier.id - 1} first`
+                       : `${Math.max(0, tier.unlockAt - state.totalSpent)} more coins to spend`}</p>
                </div>`}
         </div>
       </article>
@@ -565,7 +604,9 @@ function checkpointsRow() {
     // Eligibility here is spend-based only (no sequential gating) — a user who has
     // spent past several thresholds should see every earned box lit up at once, even
     // though the actual claim flow still requires claiming tiers in order.
-    const eligible = !state.dataLoading && !isClaimed && (state.totalSpent >= tier.unlockAt || isDirectSelect);
+    const isWelcomeGift = tier.id === 0;
+    const meetsThreshold = isWelcomeGift ? state.welcomeBonusAvailable : state.totalSpent >= tier.unlockAt;
+    const eligible = !state.dataLoading && !isClaimed && (meetsThreshold || isDirectSelect);
     const boxClass = isClaimed ? "checkpoint-claimed" : eligible ? "checkpoint-lit" : "checkpoint-dark";
     const icon = isClaimed
       ? `<img src="${coinForReward(tier)}" alt="" aria-hidden="true" class="w-full h-full object-contain" />`
@@ -641,13 +682,14 @@ if (!window._countdownIntervalStarted) {
 
 function rewardsPage() {
   const isDirectSelect = state.testMode === "direct_select";
-  const effectiveTotalSpent = isDirectSelect ? 10000 : state.totalSpent;
 
   const firstUnclaimed = TIER_DATA.find(t => !state.claimed.has(t.id));
   const firstUnclaimedId = firstUnclaimed ? firstUnclaimed.id : null;
   const target = firstUnclaimed ? firstUnclaimed.unlockAt : TIER_DATA[TIER_DATA.length - 1].unlockAt;
+  const effectiveTotalSpent = isDirectSelect ? 10000 : state.totalSpent;
   // Floor the fill so the bar always shows a sliver of progress, even at 0 spend.
-  const ratio = Math.max(4, Math.min((effectiveTotalSpent / target) * 100, 100));
+  // target can be 0 (the welcome gift, tier 0) — guard against divide-by-zero.
+  const ratio = target > 0 ? Math.max(4, Math.min((effectiveTotalSpent / target) * 100, 100)) : 100;
   const remainingToNext = Math.max(0, target - effectiveTotalSpent);
 
 
@@ -1060,6 +1102,7 @@ async function loadRewardsData() {
     state.dataUpdatedAt   = data.dataUpdatedAt    || null;
     state.cycleEndDate    = data.cycle?.endDate   || null;
     state.claimed         = new Set(data.claimedTiers || []);
+    state.welcomeBonusAvailable = !!data.welcomeGiftEligible && !state.claimed.has(0);
     state.isTester        = data.isTester         || state.isTester;
     state.lastClaimAt     = data.lastClaimAt ? new Date(data.lastClaimAt).getTime() : null;
     state.spendReflectionMinutes = data.spendReflectionMinutes || 10;
@@ -1137,6 +1180,10 @@ window.addEventListener("click", async (event) => {
       state.claimingTiers.delete(tierId);
       state.claimed.add(tierId);
       state.lastClaimAt = Date.now();
+      if (tierId === 0) {
+        state.welcomeBonusAvailable = false;
+        localStorage.removeItem("dostt_welcomeBonusAvailable");
+      }
       render();
       sweepProgressBar();
       openMysteryBoxReveal(tier, coinsFromReward(tier.reward));
@@ -1159,6 +1206,7 @@ window.addEventListener("click", async (event) => {
 
       state.claimingTiers.delete(tierId);
       state.claimed.add(tierId);
+      if (tierId === 0) state.welcomeBonusAvailable = false;
       state.lastClaimAt = res?.lastClaimAt ? new Date(res.lastClaimAt).getTime() : Date.now();
       localStorage.setItem("dostt_lastClaimAt", String(state.lastClaimAt));
       render();

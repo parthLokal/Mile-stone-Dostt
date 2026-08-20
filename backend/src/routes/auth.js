@@ -8,6 +8,19 @@ const router = express.Router();
 // ⚠️ Also defined in: app.js (line ~71) and routes/rewards.js (line ~10) — keep all three in sync
 const TEST_PHONES = ["9988818731", "9999999999"];
 
+// Welcome gift eligibility is decided ONCE, right here, at the exact moment a
+// users row is first created — never re-derived later from this env var (see
+// users.welcome_gift_eligible in rewards.js). This is what makes it safe to
+// reuse this same env var for a future rollout: changing or clearing it only
+// ever affects accounts created from that point forward, never ones already
+// decided.
+const WELCOME_GIFT_LAUNCH_DATE = process.env.WELCOME_GIFT_LAUNCH_DATE
+  ? new Date(process.env.WELCOME_GIFT_LAUNCH_DATE)
+  : null;
+function isWelcomeGiftEligibleNow() {
+  return !!(WELCOME_GIFT_LAUNCH_DATE && new Date() >= WELCOME_GIFT_LAUNCH_DATE);
+}
+
 async function lookupDosttUser(phone) {
   const queryId = Number(process.env.REDASH_VERIFY_PHONE_QUERY_ID);
   if (!queryId) return null;
@@ -126,6 +139,7 @@ router.post("/login", async (req, res) => {
     if (!existingUser?.cycle_start_date) {
       updates.cycle_start_date      = new Date();
       updates.cycle_baseline_points = -1;
+      updates.welcome_gift_eligible = isWelcomeGiftEligibleNow();
     }
     if (dosttUserId) {
       updates.dostt_user_id = dosttUserId;
@@ -193,16 +207,17 @@ router.post("/login-by-userid", async (req, res) => {
       if (!userRecord?.cycle_start_date) {
         updates.cycle_start_date      = new Date();
         updates.cycle_baseline_points = rawTotalSpent !== null ? rawTotalSpent : -1;
+        updates.welcome_gift_eligible = isWelcomeGiftEligibleNow();
       }
       await db.update("users", { phone, country_code: countryCode }, updates);
     } else {
       // Phone not yet in cache — create a user record keyed by dostt_user_id only.
       // The periodic sync will backfill phone from points_raw_cache.mobile_no.
       await db.query(
-        `INSERT INTO users (dostt_user_id, country_code, cycle_start_date, cycle_baseline_points)
-         VALUES ($1, $2, NOW(), 0)
+        `INSERT INTO users (dostt_user_id, country_code, cycle_start_date, cycle_baseline_points, welcome_gift_eligible)
+         VALUES ($1, $2, NOW(), 0, $3)
          ON CONFLICT (dostt_user_id) WHERE dostt_user_id IS NOT NULL DO NOTHING`,
-        [userIdStr, countryCode]
+        [userIdStr, countryCode, isWelcomeGiftEligibleNow()]
       );
     }
 

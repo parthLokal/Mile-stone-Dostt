@@ -16,7 +16,15 @@ const CYCLE_DAYS      = Number(process.env.CYCLE_DAYS || 30);
 const SPEND_REFLECTION_MINUTES = Number(process.env.SPEND_REFLECTION_MINUTES || 10);
 const CYCLE_MS        = CYCLE_DAYS * 24 * 60 * 60 * 1000;
 
+// Welcome gift (tier 0) eligibility is NOT computed here — it's a permanent
+// snapshot taken once, at account creation, in auth.js (users.welcome_gift_eligible).
+// This route only ever reads that column; it never re-derives eligibility from
+// WELCOME_GIFT_LAUNCH_DATE live, so changing that env var later can't retroactively
+// change an already-decided account's eligibility.
+
+// ⚠️ Also defined in: app.js TIER_DATA (id: 0) — keep in sync
 const TIER_DATA = [
+  { id: 0, unlockAt: 0,     coins: 20 }, // welcome gift — see users.welcome_gift_eligible in auth.js
   { id: 1, unlockAt: 300,   coins: 75 },
   { id: 2, unlockAt: 700,   coins: 50 },
   { id: 3, unlockAt: 1300,  coins: 50 },
@@ -354,6 +362,7 @@ router.get("/me", async (req, res) => {
         lastRefreshedAt: r?.last_refreshed_at_ist || null,
         dataUpdatedAt:   r?.synced_at || null,
         claimedTiers:    [],
+        welcomeGiftEligible: !!user?.welcome_gift_eligible,
         isTester:        false,
         lastClaimAt:     user?.last_claim_at || null,
         spendReflectionMinutes: SPEND_REFLECTION_MINUTES,
@@ -383,11 +392,16 @@ router.get("/me", async (req, res) => {
     const cycleEnd   = new Date(cycleStart.getTime() + CYCLE_MS);
     const cycleStartDateStr = toISTDateStr(cycleStart);
 
+    // Tier 0 (welcome gift) is claimed once, ever — not scoped to the current
+    // cycle like every other tier — so it must stay in this list across cycle
+    // resets, or the frontend would think it's unclaimed again and show a card
+    // that immediately 409s when tapped.
     const claimedRows = await db.query(
       `SELECT tier_id FROM claimed_rewards
-       WHERE phone = $1 AND country_code = $2 AND cycle_start_date = $3`,
+       WHERE phone = $1 AND country_code = $2 AND (cycle_start_date = $3 OR tier_id = 0)`,
       [phone, countryCode, cycleStartDateStr]
     );
+    const welcomeGiftEligible = !!user?.welcome_gift_eligible;
 
     res.json({
       totalSpent:      isTestPhone ? MAX_TIER_POINTS : (points ? Number(points.total_spent) : 0),
@@ -398,6 +412,7 @@ router.get("/me", async (req, res) => {
       lastRefreshedAt: points ? points.last_refreshed_at_ist : null,
       dataUpdatedAt:   points ? points.updated_at : null,
       claimedTiers:    claimedRows.map(r => r.tier_id),
+      welcomeGiftEligible,
       isTester:        TEST_PHONES.includes(phone), // always true for test phone, even in real mode
       lastClaimAt:     user?.last_claim_at || null,
       spendReflectionMinutes: SPEND_REFLECTION_MINUTES,
@@ -455,8 +470,22 @@ router.post("/claim", async (req, res) => {
     }
     const cycleStartDateStr = toISTDateStr(new Date(claimUser.cycle_start_date));
 
+    // Guard: welcome gift (tier 0) is a one-time-ever claim tied to a snapshot
+    // decided at account creation (users.welcome_gift_eligible, set in
+    // auth.js) — not the current cycle, and not re-derived from
+    // WELCOME_GIFT_LAUNCH_DATE here, so it can never change after the fact.
+    if (tierId === 0) {
+      if (!claimUser.welcome_gift_eligible) {
+        return res.status(403).json({ error: "Welcome gift is not available for this account." });
+      }
+      const everClaimed = await db.findOne("claimed_rewards", {
+        phone, country_code: countryCode, tier_id: 0,
+      });
+      if (everClaimed) return res.status(409).json({ error: "Welcome gift already claimed" });
+    }
+
     // Guard: already claimed this cycle?
-    const existing = await db.findOne("claimed_rewards", {
+    const existing = tierId === 0 ? null : await db.findOne("claimed_rewards", {
       phone,
       country_code:     countryCode,
       tier_id:          tierId,

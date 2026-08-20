@@ -481,6 +481,148 @@ const tables = [
     name: "claim_notifications phone nullable (safe)",
     sql: `ALTER TABLE claim_notifications ALTER COLUMN phone DROP NOT NULL;`,
   },
+  {
+    // Welcome gift (tier_id = 0) must be a one-time-ever claim, not scoped to
+    // the current cycle like every other tier — without this, a 30-day cycle
+    // reset would let it be claimed again (the general unique constraint is
+    // keyed on cycle_start_date, which changes on reset).
+    name: "claimed_rewards welcome gift one-time unique index (safe)",
+    sql: `
+      CREATE UNIQUE INDEX IF NOT EXISTS claimed_rewards_welcome_gift_once
+        ON claimed_rewards (phone, country_code)
+        WHERE tier_id = 0;
+    `,
+  },
+  {
+    // Snapshot, not a live check: set exactly once, at account creation, in
+    // auth.js. Never re-derived from WELCOME_GIFT_LAUNCH_DATE afterward — so
+    // changing or clearing that env var later can never retroactively alter
+    // an already-decided account's eligibility. Existing rows default FALSE,
+    // which is correct: they logged in before this column existed.
+    name: "users welcome_gift_eligible column (safe)",
+    sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS welcome_gift_eligible BOOLEAN NOT NULL DEFAULT FALSE;`,
+  },
+  {
+    // Add tier 0 (welcome gift) to both reporting views, alongside the
+    // existing spend-gated tiers 1-9. Tier 0 is fundamentally different, so
+    // it's UNION ALL'd in rather than added to the tiers 1-9 VALUES list:
+    //   - eligibility = users.welcome_gift_eligible (the permanent snapshot),
+    //     not a spend threshold
+    //   - "claimed" means claimed EVER (any cycle_start_date), not just this
+    //     cycle, matching the one-time-ever claim rule enforced in rewards.js
+    //   - points_raw_cache is LEFT JOINed (not INNER), since a brand-new
+    //     account may not have synced into it yet — that must never hide
+    //     their tier-0 eligibility, which doesn't depend on spend at all
+    name: "view: v_eligible_not_claimed + v_tier_status (include tier 0 welcome gift)",
+    sql: `
+      DROP VIEW IF EXISTS v_eligible_not_claimed CASCADE;
+      DROP VIEW IF EXISTS v_tier_status CASCADE;
+
+      CREATE VIEW v_eligible_not_claimed AS
+      SELECT phone, country_code, total_spent, tier_id, unlock_at, coins
+      FROM (
+        SELECT
+          u.phone,
+          u.country_code,
+          GREATEST(0, prc.raw_total_spent - GREATEST(0, u.cycle_baseline_points)) AS total_spent,
+          t.tier_id,
+          t.unlock_at,
+          t.coins
+        FROM users u
+        JOIN points_raw_cache prc ON prc.dostt_user_id = u.dostt_user_id
+        CROSS JOIN (
+          VALUES
+            (1,300,75),(2,700,50),(3,1300,50),(4,2100,100),(5,3100,65),
+            (6,4300,40),(7,5800,80),(8,7500,30),(9,10000,100)
+        ) AS t(tier_id, unlock_at, coins)
+        WHERE u.cycle_baseline_points >= 0
+          AND GREATEST(0, prc.raw_total_spent - GREATEST(0, u.cycle_baseline_points)) >= t.unlock_at
+          AND NOT EXISTS (
+            SELECT 1 FROM claimed_rewards cr
+            WHERE cr.phone            = u.phone
+              AND cr.country_code     = u.country_code
+              AND cr.tier_id          = t.tier_id
+              AND cr.cycle_start_date = u.cycle_start_date::DATE
+          )
+
+        UNION ALL
+
+        SELECT
+          u.phone,
+          u.country_code,
+          COALESCE(GREATEST(0, prc.raw_total_spent - GREATEST(0, u.cycle_baseline_points)), 0) AS total_spent,
+          0  AS tier_id,
+          0  AS unlock_at,
+          20 AS coins
+        FROM users u
+        LEFT JOIN points_raw_cache prc ON prc.dostt_user_id = u.dostt_user_id
+        WHERE u.welcome_gift_eligible = TRUE
+          AND NOT EXISTS (
+            SELECT 1 FROM claimed_rewards cr
+            WHERE cr.phone        = u.phone
+              AND cr.country_code = u.country_code
+              AND cr.tier_id      = 0
+          )
+      ) combined
+      ORDER BY total_spent DESC, tier_id;
+
+      CREATE VIEW v_tier_status AS
+      SELECT phone, country_code, total_spent, tier_id, unlock_at, coins, status, claimed_at, coins_awarded
+      FROM (
+        SELECT
+          u.phone,
+          u.country_code,
+          GREATEST(0, prc.raw_total_spent - GREATEST(0, u.cycle_baseline_points)) AS total_spent,
+          t.tier_id,
+          t.unlock_at,
+          t.coins,
+          CASE
+            WHEN cr.id IS NOT NULL THEN 'claimed'
+            WHEN GREATEST(0, prc.raw_total_spent - GREATEST(0, u.cycle_baseline_points)) >= t.unlock_at THEN 'eligible'
+            ELSE 'locked'
+          END AS status,
+          cr.claimed_at,
+          cr.coins_awarded
+        FROM users u
+        JOIN points_raw_cache prc ON prc.dostt_user_id = u.dostt_user_id
+        CROSS JOIN (
+          VALUES
+            (1,300,75),(2,700,50),(3,1300,50),(4,2100,100),(5,3100,65),
+            (6,4300,40),(7,5800,80),(8,7500,30),(9,10000,100)
+        ) AS t(tier_id, unlock_at, coins)
+        LEFT JOIN claimed_rewards cr
+          ON cr.phone            = u.phone
+         AND cr.country_code     = u.country_code
+         AND cr.tier_id          = t.tier_id
+         AND cr.cycle_start_date = u.cycle_start_date::DATE
+        WHERE u.cycle_baseline_points >= 0
+
+        UNION ALL
+
+        SELECT
+          u.phone,
+          u.country_code,
+          COALESCE(GREATEST(0, prc.raw_total_spent - GREATEST(0, u.cycle_baseline_points)), 0) AS total_spent,
+          0  AS tier_id,
+          0  AS unlock_at,
+          20 AS coins,
+          CASE
+            WHEN cr0.id IS NOT NULL THEN 'claimed'
+            WHEN u.welcome_gift_eligible THEN 'eligible'
+            ELSE 'locked'
+          END AS status,
+          cr0.claimed_at,
+          cr0.coins_awarded
+        FROM users u
+        LEFT JOIN points_raw_cache prc ON prc.dostt_user_id = u.dostt_user_id
+        LEFT JOIN claimed_rewards cr0
+          ON cr0.phone        = u.phone
+         AND cr0.country_code = u.country_code
+         AND cr0.tier_id      = 0
+      ) combined
+      ORDER BY total_spent DESC, tier_id;
+    `,
+  },
 
   // ── Housekeeping ─────────────────────────────────────────────────────────────
   {
