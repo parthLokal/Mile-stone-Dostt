@@ -515,17 +515,27 @@ function progressWindow(totalSpent) {
   };
 }
 
-function tierCard(tier, isNextUp = false) {
-  const isClaimed   = state.claimed.has(tier.id);
-  const isClaiming  = state.claimingTiers.has(tier.id);
+// Tier 1 deliberately does NOT require the welcome gift (tier 0) to be
+// claimed first — it's an independent bonus, not part of the main chain,
+// so tiers 1-9 behave exactly as they did before it existed.
+//
+// Shared by tierCard() (button state) and maybeAutoScrollToClaimableTier()
+// (which tier to auto-scroll to) — kept as one function so those two never
+// silently disagree about what "claimable" means.
+function isTierClaimable(tier) {
+  if (state.dataLoading || state.claimed.has(tier.id)) return false;
   const isDirectSelect = state.testMode === "direct_select";
-  // Tier 1 deliberately does NOT require the welcome gift (tier 0) to be
-  // claimed first — it's an independent bonus, not part of the main chain,
-  // so tiers 1-9 behave exactly as they did before it existed.
   const prevTierClaimed = tier.id <= 1 || state.claimed.has(tier.id - 1);
   const isWelcomeGift = tier.id === 0;
   const meetsThreshold = isWelcomeGift ? state.welcomeBonusAvailable : state.totalSpent >= tier.unlockAt;
-  const claimable = !state.dataLoading && (meetsThreshold || isDirectSelect) && !isClaimed && prevTierClaimed;
+  return (meetsThreshold || isDirectSelect) && prevTierClaimed;
+}
+
+function tierCard(tier, isNextUp = false) {
+  const isClaimed   = state.claimed.has(tier.id);
+  const isClaiming  = state.claimingTiers.has(tier.id);
+  const prevTierClaimed = tier.id <= 1 || state.claimed.has(tier.id - 1);
+  const claimable = isTierClaimable(tier);
   const locked = !claimable && !isClaimed;
 
   const shellClass = locked
@@ -964,6 +974,7 @@ function render() {
       rewardsRendered = true;
       sweepProgressBar();
     }
+    maybeAutoScrollToClaimableTier();
     document.getElementById("claim-type-toggle")?.addEventListener("click", () => {
       state.claimType = state.claimType === "real" ? "dummy" : "real";
       render();
@@ -973,6 +984,41 @@ function render() {
 }
 
 let rewardsRendered = false;
+
+// Users weren't claiming rewards that were sitting ready — easy to scroll past
+// unnoticed in a long list. Auto-scrolls whichever tier is currently claimable
+// to center, one at a time: the welcome gift first if it's available, otherwise
+// the next tier in the 1-9 chain that's actually ready to claim right now.
+//
+// Can't gate this on `rewardsRendered` like sweepProgressBar() above: real users'
+// eligibility (welcome gift, and sometimes totalSpent itself) isn't known until
+// loadRewardsData() resolves and calls render() a beat AFTER the very first
+// render. By that second render, rewardsRendered is already true, so a
+// rewardsRendered-gated block would never fire for exactly the render where a
+// newly-claimable card first appears in the DOM.
+//
+// Self-resetting instead, keyed to WHICH tier is targeted rather than a plain
+// boolean: re-scrolls whenever the claimable tier changes (e.g. right after
+// claiming one reward reveals the next one), but never repeats for the same
+// tier across ordinary re-renders (toggling claim-type, claiming an unrelated
+// tier, pull-to-refresh with no new eligibility, etc).
+let autoScrollTargetTierId = null;
+
+function maybeAutoScrollToClaimableTier() {
+  const target = visibleTierData().find((t) => isTierClaimable(t));
+  if (!target) { autoScrollTargetTierId = null; return; }
+  if (autoScrollTargetTierId === target.id) return;
+  if (!document.getElementById(`tier-anchor-${target.id}`)) return; // not in the DOM yet this pass — try again next render
+  autoScrollTargetTierId = target.id;
+  // Re-query by ID inside the timeout instead of closing over the element now —
+  // render() rebuilds the whole tree via innerHTML on every call, so any render
+  // in the next 500ms (data load landing, another claim, pull-to-refresh) would
+  // orphan a captured reference and make scrollIntoView silently do nothing.
+  const tierId = target.id;
+  setTimeout(() => {
+    document.getElementById(`tier-anchor-${tierId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, 500);
+}
 
 function sweepProgressBar() {
   requestAnimationFrame(() => {
